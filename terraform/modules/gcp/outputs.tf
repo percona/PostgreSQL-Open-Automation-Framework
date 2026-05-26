@@ -7,10 +7,13 @@ output "vm_ips" {
 }
 
 output "vm_facts" {
-  description = "Per-VM facts surfaced into the Ansible inventory: public IP, data-disk size, stable device path."
+  description = "Per-VM facts surfaced into the Ansible inventory."
   value = {
     for k, v in google_compute_instance.vm : k => {
       public_ip         = v.network_interface[0].access_config[0].nat_ip
+      private_ip        = v.network_interface[0].network_ip
+      zone              = v.zone
+      instance_type     = local.vms_by_name[k].instance_type
       data_disk_size_gb = local.vms_by_name[k].storage_gb
       # GCP exposes attached disks at /dev/disk/by-id/google-<device_name>,
       # where device_name is set in the attached_disk block (see main.tf).

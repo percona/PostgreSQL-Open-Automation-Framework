@@ -1,0 +1,11 @@
+---
+# postgresql — install PG packages and write base postgresql.conf / pg_hba.conf.
+# Distribution-agnostic: relies on pg_repos to have set the right repo.
+# TODO: implement. Will pin data_directory to {{ postgres_data_dir }}.
+
+- name: "[postgresql] scaffold — not yet implemented"
+  ansible.builtin.debug:
+    msg: >-
+      Placeholder for PostgreSQL {{ postgres_version }} install on
+      {{ inventory_hostname }} ({{ pg_distribution }} packages).
+      Will write postgresql.conf with data_directory={{ postgres_data_dir }}.

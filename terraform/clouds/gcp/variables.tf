@@ -61,6 +61,11 @@ variable "inventory_output_path" {
   default = "./ansible_inventory.ini"
 }
 
+variable "inventory_yaml_output_path" {
+  type    = string
+  default = "./ansible_inventory.yml"
+}
+
 variable "credentials_output_path" {
   type    = string
   default = "./credentials.json"

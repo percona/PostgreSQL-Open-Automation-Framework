@@ -1,0 +1,9 @@
+---
+# pmm_client — install the PMM agent and register against a PMM server.
+# Gated by pmm_enabled (default false). PMM server URL/token come from group_vars.
+# TODO: implement.
+
+- name: "[pmm_client] scaffold — not yet implemented"
+  ansible.builtin.debug:
+    msg: "Placeholder for PMM client install on {{ inventory_hostname }}."
+  when: pmm_enabled | bool

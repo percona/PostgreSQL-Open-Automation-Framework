@@ -1,0 +1,13 @@
+---
+# 20_patroni — install PostgreSQL and Patroni on the database tier.
+# pg_repos must come first so package installs in `postgresql` find packages.
+
+- name: Install PostgreSQL + Patroni on database hosts
+  hosts: database_hosts
+  become: true
+  vars_files:
+    - "{{ inventory_dir }}/credentials.json"
+  roles:
+    - pg_repos
+    - postgresql
+    - patroni

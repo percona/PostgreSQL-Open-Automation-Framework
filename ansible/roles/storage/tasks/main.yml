@@ -1,0 +1,13 @@
+---
+# storage — format and mount the Terraform-attached data disk at
+# {{ postgres_mount_point }} so PG/Patroni can put data on it.
+# TODO: implement. Will use data_disk_device (from inventory) and
+# postgres_data_disk_fs (from group_vars/database_hosts.yml).
+
+- name: "[storage] scaffold — not yet implemented"
+  ansible.builtin.debug:
+    msg: >-
+      Placeholder for data-disk setup on {{ inventory_hostname }}.
+      Will mkfs.{{ postgres_data_disk_fs }} on
+      {{ data_disk_device | default('<missing data_disk_device>') }}
+      and mount at {{ postgres_mount_point }}.

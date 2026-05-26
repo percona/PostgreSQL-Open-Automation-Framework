@@ -1,0 +1,10 @@
+---
+# site.yml — full pipeline. Composes the phased playbooks in dependency order.
+# Run a single phase directly when you don't need the whole thing.
+
+- import_playbook: 00_prepare.yml
+- import_playbook: 10_etcd.yml
+- import_playbook: 20_patroni.yml
+- import_playbook: 30_backups.yml
+- import_playbook: 40_monitoring.yml
+- import_playbook: 99_verify.yml

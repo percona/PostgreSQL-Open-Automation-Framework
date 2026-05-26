@@ -1,6 +1,11 @@
 output "ansible_inventory_path" {
-  description = "Path to the rendered Ansible inventory file."
+  description = "Path to the rendered Ansible inventory file (INI, compatibility)."
   value       = module.inventory.inventory_path
+}
+
+output "ansible_inventory_yaml_path" {
+  description = "Path to the rendered Ansible inventory file (YAML, primary)."
+  value       = module.inventory.inventory_yaml_path
 }
 
 output "vm_ips" {

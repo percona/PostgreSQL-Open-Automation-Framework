@@ -1,0 +1,20 @@
+---
+# ops/switchover — planned switchover to a chosen standby. Usage:
+#   ansible-playbook -i inventory/<cloud> playbooks/ops/switchover.yml -e target=node2
+# TODO: implement. Will wrap `patronictl switchover --candidate <target> --force`
+# with pre-checks (target is healthy, low lag) and post-checks (new leader accepting writes).
+
+- name: Planned switchover to {{ target | default('<unset>') }}
+  hosts: database_hosts[0]
+  gather_facts: false
+  tasks:
+    - name: target= must be set
+      ansible.builtin.assert:
+        that:
+          - target is defined
+          - target in groups['database_hosts']
+        fail_msg: "Pass -e target=<host> where <host> is a member of database_hosts."
+
+    - name: "[switchover] scaffold — not yet implemented"
+      ansible.builtin.debug:
+        msg: "Would run: patronictl -c /etc/patroni/patroni.yml switchover --candidate {{ target }} --force"

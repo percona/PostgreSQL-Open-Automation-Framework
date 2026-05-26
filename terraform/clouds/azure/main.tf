@@ -78,14 +78,15 @@ module "vms" {
 module "inventory" {
   source = "../../modules/inventory"
 
-  provider_name           = "azure"
-  vm_facts                = module.vms.vm_facts
-  database_hosts          = var.database_hosts
-  resolved_etcd_hosts     = local.resolved_etcd_hosts
-  etcd_hosts_external     = local.etcd_hosts_external
-  ssh_user                = var.ssh_user
-  ssh_private_key_path    = var.ssh_private_key_path
-  ssh_public_key_path     = var.ssh_public_key_path
-  inventory_output_path   = var.inventory_output_path
-  credentials_output_path = var.credentials_output_path
+  provider_name              = "azure"
+  vm_facts                   = module.vms.vm_facts
+  database_hosts             = var.database_hosts
+  resolved_etcd_hosts        = local.resolved_etcd_hosts
+  etcd_hosts_external        = local.etcd_hosts_external
+  ssh_user                   = var.ssh_user
+  ssh_private_key_path       = var.ssh_private_key_path
+  ssh_public_key_path        = var.ssh_public_key_path
+  inventory_output_path      = var.inventory_output_path
+  inventory_yaml_output_path = var.inventory_yaml_output_path
+  credentials_output_path    = var.credentials_output_path
 }

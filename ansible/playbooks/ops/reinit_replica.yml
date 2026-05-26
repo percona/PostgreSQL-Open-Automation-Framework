@@ -1,0 +1,19 @@
+---
+# ops/reinit_replica — wipe and rebuild a broken replica from the primary. Usage:
+#   ansible-playbook -i inventory/<cloud> playbooks/ops/reinit_replica.yml -e target=node3
+# Destructive on the target node. TODO: implement; will wrap `patronictl reinit`.
+
+- name: Reinitialize replica {{ target | default('<unset>') }}
+  hosts: database_hosts[0]
+  gather_facts: false
+  tasks:
+    - name: target= must be set
+      ansible.builtin.assert:
+        that:
+          - target is defined
+          - target in groups['database_hosts']
+        fail_msg: "Pass -e target=<host> where <host> is a member of database_hosts."
+
+    - name: "[reinit_replica] scaffold — not yet implemented"
+      ansible.builtin.debug:
+        msg: "Would run: patronictl -c /etc/patroni/patroni.yml reinit {{ cluster_name }} {{ target }}"

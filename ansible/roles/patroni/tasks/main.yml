@@ -1,0 +1,12 @@
+---
+# patroni — install Patroni, write patroni.yml pointing at the etcd cluster,
+# install the systemd unit, start the service. PG will be managed by Patroni
+# from this point on — don't `systemctl start postgresql` directly.
+# TODO: implement.
+
+- name: "[patroni] scaffold — not yet implemented"
+  ansible.builtin.debug:
+    msg: >-
+      Placeholder for Patroni install on {{ inventory_hostname }}.
+      Cluster name: {{ cluster_name }}.
+      DCS: etcd at {{ groups['etcd_cluster'] | map('extract', hostvars, 'private_ip') | join(',') }}.

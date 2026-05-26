@@ -1,0 +1,19 @@
+---
+# 99_verify — cheap, safe healthchecks. Run any time. Run after every change.
+
+- name: Connectivity check
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: SSH and Python reachable
+      ansible.builtin.ping:
+
+- name: Cluster health (planned)
+  hosts: database_hosts[0]
+  gather_facts: false
+  tasks:
+    - name: "TODO — patronictl list, pg_isready on every db host, replication lag, etcd member list"
+      ansible.builtin.debug:
+        msg: >-
+          Cluster health assertions will be implemented alongside the etcd / patroni
+          roles. Until then, this play just confirms SSH reachability above.

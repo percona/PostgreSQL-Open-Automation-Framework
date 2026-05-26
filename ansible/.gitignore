@@ -1,0 +1,8 @@
+# Inventory artifacts synced from terraform/ — regenerate via scripts/sync-inventory.sh
+inventory/*/hosts.yml
+inventory/*/hosts.ini
+inventory/*/credentials.json
+
+# Ansible runtime
+*.retry
+.vault_pass

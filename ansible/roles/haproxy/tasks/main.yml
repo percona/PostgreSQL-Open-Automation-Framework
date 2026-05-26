@@ -1,0 +1,9 @@
+---
+# haproxy — optional R/W + R/O routing for app traffic. Backends are driven by
+# Patroni's REST API (leader/replica checks). Gated by haproxy_enabled (default false).
+# TODO: implement.
+
+- name: "[haproxy] scaffold — not yet implemented"
+  ansible.builtin.debug:
+    msg: "Placeholder for HAProxy install on {{ inventory_hostname }}."
+  when: haproxy_enabled | bool

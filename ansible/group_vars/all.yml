@@ -1,0 +1,26 @@
+---
+# Cross-cloud defaults. Override per-cloud in
+# inventory/<cloud>/group_vars/all/cloud.yml, or per-host in host_vars/.
+
+# Cluster identity. Used by Patroni as the cluster name in etcd.
+cluster_name: poaf
+
+# PostgreSQL distribution: percona (PDPG) or pgdg (community).
+# PDPG is the better-tested path in this framework.
+pg_distribution: percona
+
+# PostgreSQL major version. PDPG ships 16 and 17; PGDG ships 13–17.
+postgres_version: 17
+
+# Where PG data lives. Must point under the mounted data disk (see roles/storage).
+postgres_data_dir: /var/lib/postgresql/{{ postgres_version }}/data
+postgres_wal_dir:  "{{ postgres_data_dir }}/pg_wal"
+
+# OS basics.
+timezone: UTC
+locale:   en_US.UTF-8
+
+# Feature toggles for optional components.
+pgbackrest_enabled: false
+pmm_enabled:        false
+haproxy_enabled:    false

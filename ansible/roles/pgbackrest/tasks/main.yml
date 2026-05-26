@@ -1,0 +1,9 @@
+---
+# pgbackrest — install pgBackRest, configure stanza, schedule full/diff backups.
+# Gated by pgbackrest_enabled (default false). Repo location is operator-supplied.
+# TODO: implement.
+
+- name: "[pgbackrest] scaffold — not yet implemented"
+  ansible.builtin.debug:
+    msg: "Placeholder for pgBackRest setup on {{ inventory_hostname }}."
+  when: pgbackrest_enabled | bool

@@ -1,0 +1,8 @@
+---
+# Per-cloud overrides for the GCP inventory. Hand-edited; survives sync-inventory.sh.
+provider: gcp
+
+# Uncomment to override the cross-cloud defaults in ansible/group_vars/all.yml:
+# pg_distribution: pgdg
+# postgres_version: 16
+# region: us-central1

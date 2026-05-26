@@ -1,0 +1,53 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# clouds/azure — copy to clouds/azure/terraform.tfvars and edit before applying.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── VM definitions ───────────────────────────────────────────────────────────
+# All nodes are intentionally identical: the primary is elected at runtime,
+# so any node must be able to take over without a capacity drop.
+vms = [
+  {
+    name          = "node1"
+    instance_type = "Standard_D4s_v5"
+    storage_gb    = 200
+  },
+  {
+    name          = "node2"
+    instance_type = "Standard_D4s_v5"
+    storage_gb    = 200
+  },
+  {
+    name          = "node3"
+    instance_type = "Standard_D4s_v5"
+    storage_gb    = 200
+  },
+]
+
+# ── Database hosts (MANDATORY) ───────────────────────────────────────────────
+database_hosts = ["node1", "node2", "node3"]
+
+# ── etcd hosts (OPTIONAL) ────────────────────────────────────────────────────
+etcd_hosts = []
+
+# ── High availability ────────────────────────────────────────────────────────
+enable_ha = true
+
+# ── SSH / Ansible connection ─────────────────────────────────────────────────
+ssh_user             = "ubuntu"
+ssh_public_key_path  = "~/.ssh/id_rsa.pub"
+ssh_private_key_path = "~/.ssh/id_rsa"
+
+# ── Azure-specific ───────────────────────────────────────────────────────────
+azure_location       = "East US"
+azure_resource_group = "poaf-rg"
+# azure_image          = "Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest"
+
+# ── To boot Rocky Linux 8 / 9 instead of Ubuntu ──────────────────────────────
+# Rocky images are published in the Azure Marketplace by publisher "resf".
+# You must accept the Marketplace terms once per subscription before apply:
+#   az vm image terms accept --urn resf:rockylinux-x86_64:9-base:latest
+# Rocky's default cloud-init user is "rocky", not "ubuntu".
+# See doc/azure.md §5 for the full walkthrough.
+#
+# ssh_user    = "rocky"
+# azure_image = "resf:rockylinux-x86_64:9-base:latest"   # or 8-base:latest

@@ -1,0 +1,53 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# clouds/aws — copy to clouds/aws/terraform.tfvars and edit before applying.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── VM definitions ───────────────────────────────────────────────────────────
+# All nodes are intentionally identical: the primary is elected at runtime,
+# so any node must be able to take over without a capacity drop.
+vms = [
+  {
+    name          = "node1"
+    instance_type = "m6i.xlarge"
+    storage_gb    = 200
+  },
+  {
+    name          = "node2"
+    instance_type = "m6i.xlarge"
+    storage_gb    = 200
+  },
+  {
+    name          = "node3"
+    instance_type = "m6i.xlarge"
+    storage_gb    = 200
+  },
+]
+
+# ── Database hosts (MANDATORY) ───────────────────────────────────────────────
+database_hosts = ["node1", "node2", "node3"]
+
+# ── etcd hosts (OPTIONAL) ────────────────────────────────────────────────────
+etcd_hosts = []
+
+# ── High availability ────────────────────────────────────────────────────────
+enable_ha = true
+
+# ── SSH / Ansible connection ─────────────────────────────────────────────────
+ssh_user             = "ubuntu"
+ssh_public_key_path  = "~/.ssh/id_rsa.pub"
+ssh_private_key_path = "~/.ssh/id_rsa"
+
+# ── AWS-specific ─────────────────────────────────────────────────────────────
+aws_region = "us-east-1"
+# aws_ami       = ""   # blank → latest Ubuntu 22.04 LTS
+# aws_vpc_id    = ""   # blank → default VPC
+# aws_subnet_id = ""   # blank → first subnet in resolved VPC
+
+# ── To boot Rocky Linux 8 / 9 instead of Ubuntu ──────────────────────────────
+# Rocky AMIs are published by the Rocky Enterprise Software Foundation
+# (owner 792107900819) and are region-scoped — look one up in aws_region,
+# then pin it here. Rocky's default cloud-init user is "rocky", not "ubuntu".
+# See doc/aws.md §5 for the describe-images query and the full walkthrough.
+#
+# ssh_user = "rocky"
+# aws_ami  = "ami-xxxxxxxxxxxxxxxxx"   # Rocky-9-EC2-Base-9.* (or Rocky-8-…) in aws_region

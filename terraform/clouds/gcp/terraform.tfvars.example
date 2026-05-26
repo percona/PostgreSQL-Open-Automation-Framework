@@ -1,0 +1,53 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# clouds/gcp — copy to clouds/gcp/terraform.tfvars and edit before applying.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── VM definitions ───────────────────────────────────────────────────────────
+# All nodes are intentionally identical: the primary is elected at runtime,
+# so any node must be able to take over without a capacity drop.
+vms = [
+  {
+    name          = "node1"
+    instance_type = "n2-standard-4"
+    storage_gb    = 200
+  },
+  {
+    name          = "node2"
+    instance_type = "n2-standard-4"
+    storage_gb    = 200
+  },
+  {
+    name          = "node3"
+    instance_type = "n2-standard-4"
+    storage_gb    = 200
+  },
+]
+
+# ── Database hosts (MANDATORY) ───────────────────────────────────────────────
+database_hosts = ["node1", "node2", "node3"]
+
+# ── etcd hosts (OPTIONAL) ────────────────────────────────────────────────────
+# Empty list → falls back to database_hosts. Supply names from `vms`, or names
+# of pre-existing infrastructure that should be referenced as-is.
+etcd_hosts = []
+
+# ── High availability ────────────────────────────────────────────────────────
+enable_ha = true
+
+# ── SSH / Ansible connection ─────────────────────────────────────────────────
+ssh_user             = "ubuntu"
+ssh_public_key_path  = "~/.ssh/id_rsa.pub"
+ssh_private_key_path = "~/.ssh/id_rsa"
+
+# ── GCP-specific ─────────────────────────────────────────────────────────────
+gcp_project = "" # REQUIRED — your GCP project ID
+gcp_region  = "us-central1"
+gcp_zone    = "us-central1-a"
+# gcp_image = "ubuntu-os-cloud/ubuntu-2204-lts"   # default (Ubuntu 22.04)
+
+# ── To boot Rocky Linux 8 / 9 instead of Ubuntu ──────────────────────────────
+# Override both lines together — the default user on Rocky cloud images is
+# "rocky", not "ubuntu". See doc/gcp.md §5 for the full walkthrough.
+#
+# ssh_user  = "rocky"
+# gcp_image = "rocky-linux-cloud/rocky-linux-9"   # or rocky-linux-8

@@ -1,0 +1,3 @@
+# Claude Code local config — never commit
+.claude/
+CLAUDE.md

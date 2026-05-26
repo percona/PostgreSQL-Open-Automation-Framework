@@ -7,6 +7,9 @@ variable "vm_facts" {
   description = "Per-VM facts emitted by the cloud module. Keyed by vm name."
   type = map(object({
     public_ip         = string
+    private_ip        = string
+    zone              = string
+    instance_type     = string
     data_disk_size_gb = number
     data_disk_device  = string
   }))
@@ -41,7 +44,13 @@ variable "ssh_public_key_path" {
 }
 
 variable "inventory_output_path" {
-  type = string
+  description = "Path to the rendered Ansible inventory in INI format (compatibility)."
+  type        = string
+}
+
+variable "inventory_yaml_output_path" {
+  description = "Path to the rendered Ansible inventory in YAML format (primary, consumed by playbooks)."
+  type        = string
 }
 
 variable "credentials_output_path" {

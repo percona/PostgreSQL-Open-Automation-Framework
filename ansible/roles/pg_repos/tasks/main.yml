@@ -1,0 +1,16 @@
+---
+# pg_repos — configure the package repository for the chosen PG distribution.
+# Branches on pg_distribution: percona (PDPG, default) or pgdg (community).
+# TODO: implement repo setup tasks; expose postgresql_packages, postgresql_service_name.
+
+- name: "[pg_repos] scaffold — not yet implemented"
+  ansible.builtin.debug:
+    msg: >-
+      Placeholder for repo setup on {{ inventory_hostname }}.
+      Will configure {{ pg_distribution }} repos for PostgreSQL {{ postgres_version }}.
+
+- name: "[pg_repos] validate pg_distribution value"
+  ansible.builtin.assert:
+    that:
+      - pg_distribution in ['percona', 'pgdg']
+    fail_msg: "pg_distribution must be 'percona' or 'pgdg', got: {{ pg_distribution }}"

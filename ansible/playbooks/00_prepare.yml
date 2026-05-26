@@ -1,0 +1,11 @@
+---
+# 00_prepare — OS prep and storage on every VM, before any service install.
+
+- name: Prepare all hosts
+  hosts: all
+  become: true
+  vars_files:
+    - "{{ inventory_dir }}/credentials.json"
+  roles:
+    - common
+    - storage

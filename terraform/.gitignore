@@ -5,6 +5,7 @@ terraform.tfvars
 .terraform.lock.hcl
 credentials.json
 ansible_inventory.ini
+ansible_inventory.yml
 crash.log
 crash.*.log
 override.tf

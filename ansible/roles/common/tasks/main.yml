@@ -1,0 +1,9 @@
+---
+# common — OS prep: packages, sysctl, ulimits, users, NTP, timezone.
+# TODO: implement. For now, the play succeeds as a no-op so the pipeline runs end-to-end.
+
+- name: "[common] scaffold — not yet implemented"
+  ansible.builtin.debug:
+    msg: >-
+      Placeholder for OS prep on {{ inventory_hostname }}. Will install base
+      packages, set sysctl/ulimits, configure NTP, set timezone={{ timezone }}.

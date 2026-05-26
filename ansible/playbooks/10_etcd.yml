@@ -1,0 +1,10 @@
+---
+# 10_etcd — bootstrap the etcd cluster used as Patroni's DCS.
+
+- name: Bootstrap etcd cluster
+  hosts: etcd_cluster
+  become: true
+  vars_files:
+    - "{{ inventory_dir }}/credentials.json"
+  roles:
+    - etcd

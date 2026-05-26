@@ -1,0 +1,11 @@
+---
+# 30_backups — pgBackRest. Skipped entirely when pgbackrest_enabled is false.
+
+- name: Configure pgBackRest on database hosts
+  hosts: database_hosts
+  become: true
+  vars_files:
+    - "{{ inventory_dir }}/credentials.json"
+  roles:
+    - role: pgbackrest
+      when: pgbackrest_enabled | bool

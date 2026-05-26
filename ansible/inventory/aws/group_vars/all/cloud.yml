@@ -1,0 +1,8 @@
+---
+# Per-cloud overrides for the AWS inventory. Hand-edited; survives sync-inventory.sh.
+provider: aws
+
+# Uncomment to override the cross-cloud defaults in ansible/group_vars/all.yml:
+# pg_distribution: pgdg
+# postgres_version: 16
+# region: us-east-1

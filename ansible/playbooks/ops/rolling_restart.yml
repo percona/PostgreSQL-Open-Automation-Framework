@@ -1,0 +1,14 @@
+---
+# ops/rolling_restart — restart PG on every node, switching over the leader last.
+# TODO: implement. Will iterate standbys → switchover → restart old leader → verify.
+
+- name: Rolling restart
+  hosts: database_hosts[0]
+  gather_facts: false
+  tasks:
+    - name: "[rolling_restart] scaffold — not yet implemented"
+      ansible.builtin.debug:
+        msg: >-
+          Will restart standbys one-by-one (waiting for each to rejoin),
+          then switchover, then restart the former leader,
+          then re-run 99_verify.yml.

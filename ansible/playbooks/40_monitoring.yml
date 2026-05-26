@@ -1,0 +1,11 @@
+---
+# 40_monitoring — PMM client on every VM. Skipped entirely when pmm_enabled is false.
+
+- name: Install PMM client on all hosts
+  hosts: all
+  become: true
+  vars_files:
+    - "{{ inventory_dir }}/credentials.json"
+  roles:
+    - role: pmm_client
+      when: pmm_enabled | bool

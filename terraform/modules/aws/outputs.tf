@@ -4,10 +4,13 @@ output "vm_ips" {
 }
 
 output "vm_facts" {
-  description = "Per-VM facts surfaced into the Ansible inventory: public IP, data-disk size, stable device path."
+  description = "Per-VM facts surfaced into the Ansible inventory."
   value = {
     for k, v in aws_instance.vm : k => {
       public_ip         = v.public_ip
+      private_ip        = v.private_ip
+      zone              = v.availability_zone
+      instance_type     = v.instance_type
       data_disk_size_gb = local.vms_by_name[k].storage_gb
       # On Nitro instances (m5/m6/c6/t3/t4g/etc.) the kernel ignores the
       # device_name we set on the attachment and exposes EBS volumes via

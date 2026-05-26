@@ -1,0 +1,11 @@
+---
+# etcd — install and bootstrap the etcd cluster on the etcd_cluster group.
+# Cluster topology comes from inventory; ports/scheme come from group_vars/etcd_cluster.yml.
+# TODO: implement.
+
+- name: "[etcd] scaffold — not yet implemented"
+  ansible.builtin.debug:
+    msg: >-
+      Placeholder for etcd bootstrap on {{ inventory_hostname }}.
+      Cluster members will be: {{ groups['etcd_cluster'] | join(', ') }}.
+      Client port: {{ etcd_client_port }}, peer port: {{ etcd_peer_port }}.

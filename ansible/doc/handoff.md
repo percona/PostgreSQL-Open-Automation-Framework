@@ -149,15 +149,17 @@ works offline, fits naturally with CI, and keeps sensitive data isolated to a si
 ## What you must add by hand
 
 The contract above covers everything Terraform can know. A few things only the
-operator knows — they live in `inventory/<cloud>/group_vars/all/cloud.yml` or in
-the cross-cloud `ansible/group_vars/`:
+operator knows — these live in role defaults, `playbooks/group_vars/`, the per-cloud
+`inventory/<cloud>/group_vars/all/cloud.yml`, or `host_vars/`. (There is no top-level
+`ansible/group_vars/`; see the Ansible README's *Where variables live* section.)
 
 | Setting | Where | Default |
 |---|---|---|
-| `pg_distribution: percona\|pgdg` | `group_vars/all.yml` or per-cloud `cloud.yml` | `percona` |
-| `postgres_version` | `group_vars/all.yml` | latest supported PDPG |
-| `pgbackrest_enabled: true` and repo config | `group_vars/database_hosts.yml` | disabled |
-| PMM server URL + token | `group_vars/all.yml` (or vault) | disabled |
+| `etcd_install_method: package\|binary` | role default; override per-cloud in `cloud.yml` | `package` (Percona repo) |
+| `pg_distribution: percona\|pgdg` | `playbooks/group_vars/all.yml` | `percona` |
+| `postgres_version` | `playbooks/group_vars/all.yml` | latest supported PDPG |
+| `pgbackrest_enabled: true` and repo config | `playbooks/group_vars/all.yml` | disabled |
+| PMM server URL + token | `playbooks/group_vars/all.yml` (or vault) | disabled |
 | External etcd member SSH details | `host_vars/<name>.yml` | — |
 
 ---

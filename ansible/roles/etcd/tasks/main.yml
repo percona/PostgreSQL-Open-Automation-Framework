@@ -1,11 +1,87 @@
 ---
 # etcd — install and bootstrap the etcd cluster on the etcd_cluster group.
-# Cluster topology comes from inventory; ports/scheme come from group_vars/etcd_cluster.yml.
-# TODO: implement.
+# Topology is derived from the inventory group; ports/scheme/data_dir/state come from
+# the role defaults (override per-cloud in inventory/<cloud>/group_vars/). The play
+# runs all members in parallel so the Type=notify units form quorum together on first
+# boot.
+#
+# etcd_install_method selects the source: "package" (Percona PDPG repo, default) or
+# "binary" (upstream tarball). Either way we run etcd under our own systemd unit
+# pointed at etcd_server_bin, so behaviour is identical across methods and distros.
 
-- name: "[etcd] scaffold — not yet implemented"
-  ansible.builtin.debug:
-    msg: >-
-      Placeholder for etcd bootstrap on {{ inventory_hostname }}.
-      Cluster members will be: {{ groups['etcd_cluster'] | join(', ') }}.
-      Client port: {{ etcd_client_port }}, peer port: {{ etcd_peer_port }}.
+- name: "[etcd] validate install method"
+  ansible.builtin.assert:
+    that:
+      - etcd_install_method in ['package', 'binary']
+    fail_msg: "etcd_install_method must be 'package' or 'binary', got: {{ etcd_install_method }}"
+
+- name: "[etcd] require at least one private address to advertise"
+  ansible.builtin.assert:
+    that:
+      - etcd_advertise_ip is defined
+      - etcd_advertise_ip | length > 0
+    fail_msg: >-
+      No private_ip or ansible_host for {{ inventory_hostname }}; cannot build
+      etcd peer URLs.
+
+- name: "[etcd] install etcd ({{ etcd_install_method }})"
+  ansible.builtin.include_tasks: "install-{{ etcd_install_method }}.yml"
+
+- name: "[etcd] create config directory"
+  ansible.builtin.file:
+    path: "{{ etcd_conf_dir }}"
+    state: directory
+    owner: root
+    group: "{{ etcd_group }}"
+    mode: "0750"
+
+- name: "[etcd] create data directory"
+  ansible.builtin.file:
+    path: "{{ etcd_data_dir }}"
+    state: directory
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
+    mode: "0700"
+
+- name: "[etcd] render member config"
+  ansible.builtin.template:
+    src: etcd.conf.yml.j2
+    dest: "{{ etcd_config_file }}"
+    owner: root
+    group: "{{ etcd_group }}"
+    mode: "0640"
+  notify: Restart etcd
+
+- name: "[etcd] install systemd unit"
+  ansible.builtin.template:
+    src: etcd.service.j2
+    dest: /etc/systemd/system/etcd.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart etcd
+
+- name: "[etcd] enable and start etcd"
+  ansible.builtin.systemd:
+    name: etcd
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# Apply any pending restart (config/unit/binary change) before health-checking,
+# so the assertion reflects the running config.
+- name: "[etcd] apply pending restarts"
+  ansible.builtin.meta: flush_handlers
+
+- name: "[etcd] wait for this member to report healthy"
+  ansible.builtin.command: >-
+    {{ etcd_ctl_bin }}
+    --endpoints={{ etcd_scheme }}://127.0.0.1:{{ etcd_client_port }}
+    endpoint health
+  environment:
+    ETCDCTL_API: "3"
+  register: etcd_health
+  until: etcd_health.rc == 0
+  retries: 12
+  delay: 5
+  changed_when: false

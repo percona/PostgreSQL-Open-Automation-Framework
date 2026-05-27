@@ -1,0 +1,65 @@
+---
+# install-package.yml — install etcd from the Percona PDPG repository (default).
+#
+# The Debian etcd package auto-starts a single-node etcd in its postinst, which fails
+# on a not-yet-clustered node and aborts dpkg. We install behind a policy-rc.d deny
+# shim so the postinst's service start is skipped; we bring etcd up ourselves later
+# (main.yml installs our own unit, which shadows the packaged one).
+
+- name: "[etcd] configure Percona repository"
+  ansible.builtin.include_tasks: percona_repo.yml
+
+- name: "[etcd] check whether etcd is already installed"
+  ansible.builtin.stat:
+    path: /usr/bin/etcd
+  register: etcd_pkg_binary
+
+- name: "[etcd] install etcd package (no auto-start)"
+  block:
+    # Block invoke-rc.d during install so the package postinst doesn't try to start
+    # (and fail) etcd before it's configured for the cluster. Debian/Ubuntu only, and
+    # only on first install (when the postinst actually runs) so re-runs stay no-op.
+    - name: "[etcd] install policy-rc.d service-start blocker"
+      ansible.builtin.copy:
+        dest: /usr/sbin/policy-rc.d
+        content: "#!/bin/sh\nexit 101\n"
+        mode: "0755"
+      when:
+        - ansible_os_family == 'Debian'
+        - not etcd_pkg_binary.stat.exists
+
+    # The etcd-server postinst chmods the data dir; ensure it exists (a pre-existing
+    # etcd user can otherwise leave it uncreated). No owner/mode — the postinst sets them.
+    - name: "[etcd] ensure data directory exists before package configure"
+      ansible.builtin.file:
+        path: "{{ etcd_data_dir }}"
+        state: directory
+
+    - name: "[etcd] install etcd packages"
+      ansible.builtin.package:
+        name: "{{ etcd_packages }}"
+        state: present
+      register: etcd_pkg
+
+  always:
+    - name: "[etcd] remove policy-rc.d service-start blocker"
+      ansible.builtin.file:
+        path: /usr/sbin/policy-rc.d
+        state: absent
+      when: ansible_os_family == 'Debian'
+
+# On a fresh package install, clear any default member data so our config bootstraps a
+# clean cluster (initial-cluster-state: new). main.yml recreates the data dir after.
+- name: "[etcd] reset etcd state (fresh install only)"
+  when: etcd_pkg is changed
+  block:
+    - name: "[etcd] stop and disable the packaged etcd"
+      ansible.builtin.systemd:
+        name: etcd
+        state: stopped
+        enabled: false
+
+    - name: "[etcd] remove any default member data"
+      ansible.builtin.file:
+        path: "{{ etcd_data_dir }}"
+        state: absent

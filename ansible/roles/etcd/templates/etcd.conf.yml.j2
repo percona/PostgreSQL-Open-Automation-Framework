@@ -1,0 +1,14 @@
+{{ ansible_managed | comment }}
+# etcd member config for {{ inventory_hostname }} — rendered by roles/etcd.
+name: "{{ inventory_hostname }}"
+data-dir: "{{ etcd_data_dir }}"
+
+listen-peer-urls: "{{ etcd_scheme }}://{{ etcd_advertise_ip }}:{{ etcd_peer_port }}"
+listen-client-urls: "{{ etcd_scheme }}://{{ etcd_advertise_ip }}:{{ etcd_client_port }},{{ etcd_scheme }}://127.0.0.1:{{ etcd_client_port }}"
+
+initial-advertise-peer-urls: "{{ etcd_scheme }}://{{ etcd_advertise_ip }}:{{ etcd_peer_port }}"
+advertise-client-urls: "{{ etcd_scheme }}://{{ etcd_advertise_ip }}:{{ etcd_client_port }}"
+
+initial-cluster: "{% for h in groups['etcd_cluster'] %}{{ h }}={{ etcd_scheme }}://{{ hostvars[h].private_ip | default(hostvars[h].ansible_host) }}:{{ etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %}"
+initial-cluster-token: "{{ etcd_initial_cluster_token }}"
+initial-cluster-state: "{{ etcd_initial_cluster_state }}"

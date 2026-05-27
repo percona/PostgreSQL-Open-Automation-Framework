@@ -1,9 +1,64 @@
 ---
-# common — OS prep: packages, sysctl, ulimits, users, NTP, timezone.
-# TODO: implement. For now, the play succeeds as a no-op so the pipeline runs end-to-end.
+# common — OS prep shared by every node: packages, time, locale, kernel tuning, limits.
+# Supports Debian/Ubuntu and RHEL/Rocky (the two families this framework targets).
 
-- name: "[common] scaffold — not yet implemented"
-  ansible.builtin.debug:
-    msg: >-
-      Placeholder for OS prep on {{ inventory_hostname }}. Will install base
-      packages, set sysctl/ulimits, configure NTP, set timezone={{ timezone }}.
+- name: "[common] assert a supported OS family"
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family in ['Debian', 'RedHat']
+    fail_msg: >-
+      common role supports Debian/Ubuntu and RHEL/Rocky only
+      (got ansible_os_family={{ ansible_os_family }}).
+
+- name: "[common] update apt cache"
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_os_family == 'Debian'
+
+- name: "[common] install base packages"
+  ansible.builtin.package:
+    name: "{{ common_base_packages }}"
+    state: present
+
+- name: "[common] set system timezone"
+  community.general.timezone:
+    name: "{{ timezone }}"
+
+- name: "[common] ensure locale is generated (Debian)"
+  community.general.locale_gen:
+    name: "{{ locale }}"
+    state: present
+  when: ansible_os_family == 'Debian'
+
+- name: "[common] install locale langpack (RHEL)"
+  ansible.builtin.package:
+    name: "glibc-langpack-{{ locale.split('_')[0] }}"
+    state: present
+  when: ansible_os_family == 'RedHat'
+
+- name: "[common] enable and start NTP (chrony)"
+  ansible.builtin.service:
+    name: "{{ common_ntp_service }}"
+    state: started
+    enabled: true
+
+- name: "[common] apply kernel tuning"
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/60-poaf.conf
+    sysctl_set: true
+    reload: true
+    state: present
+  loop: "{{ common_sysctl | dict2items }}"
+  notify: Reload sysctl
+
+- name: "[common] set resource limits"
+  community.general.pam_limits:
+    domain: "{{ item.domain }}"
+    limit_type: "{{ item.limit_type }}"
+    limit_item: "{{ item.limit_item }}"
+    value: "{{ item.value }}"
+    dest: /etc/security/limits.d/60-poaf.conf
+  loop: "{{ common_limits }}"

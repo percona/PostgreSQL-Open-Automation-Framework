@@ -2,10 +2,11 @@
 
 Common operational procedures for a cluster deployed by this framework.
 
-> **Status:** the playbooks referenced below are **planned, not yet implemented**.
-> This document records the intended procedures so they're agreed before any code
-> lands. Sections marked **[planned]** describe behavior the playbooks will provide
-> once written.
+> **Status (2026-05-27):** the **etcd** healthchecks in `99_verify.yml` are implemented
+> (see below). The Patroni/PostgreSQL-specific procedures — switchover, replica reinit,
+> rolling restart, backups — are still **planned**; the playbooks under
+> `playbooks/ops/` are stubs. Sections marked **[planned]** describe behavior the
+> playbooks will provide once the relevant roles land.
 
 ---
 
@@ -16,17 +17,50 @@ cd ansible
 ansible-playbook -i inventory/<cloud> playbooks/99_verify.yml
 ```
 
-**[planned]** This playbook will:
+**Implemented today:**
+
+- SSH + Python reachability on every host (`ping`).
+- etcd member list — asserts the number of members equals the size of the
+  `etcd_cluster` group.
+- etcd cluster health — `etcdctl endpoint health --cluster`; fails if any member is
+  unhealthy, and prints the per-member result.
+
+**[planned]** Once Patroni/PostgreSQL land, this playbook will also:
 
 - Run `patronictl -c /etc/patroni/patroni.yml list` on the leader.
 - Check `pg_isready` on every database host.
 - Report `pg_stat_replication` lag for each standby.
-- List etcd cluster members and confirm a healthy quorum.
-- Fail loudly if any host is unreachable, any standby is more than N seconds behind,
-  or etcd has lost quorum.
 
 Run it after any change. Run it as a cron from your monitoring host if you want a
 cheap external healthcheck.
+
+---
+
+## Inspecting etcd directly
+
+etcd is installed from the Percona PDPG repo by default (`etcd_install_method: package`),
+so `etcdctl` is on `PATH` (`/usr/bin/etcdctl`). On any etcd node:
+
+```bash
+export ETCDCTL_API=3
+etcdctl --endpoints=http://127.0.0.1:2379 member list -w table
+etcdctl --endpoints=http://127.0.0.1:2379 endpoint health --cluster
+etcdctl --endpoints=http://127.0.0.1:2379 endpoint status -w table
+```
+
+The cluster runs under a systemd unit managed by the `etcd` role:
+
+```bash
+systemctl status etcd
+journalctl -u etcd -f
+```
+
+To re-apply etcd config or recover a member, re-run the phase (it is idempotent and
+will not restart a healthy cluster unless the config changed):
+
+```bash
+ansible-playbook -i inventory/<cloud> playbooks/10_etcd.yml
+```
 
 ---
 
@@ -146,7 +180,7 @@ Terraform destroy.
 
 ## Backup & restore
 
-> **[planned]** Once `pgbackrest_enabled: true` is set in `group_vars/database_hosts.yml`
+> **[planned]** Once `pgbackrest_enabled: true` is set in `playbooks/group_vars/all.yml`
 > and the `30_backups.yml` playbook has been run:
 
 ```bash

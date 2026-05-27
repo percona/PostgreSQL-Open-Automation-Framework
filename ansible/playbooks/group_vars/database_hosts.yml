@@ -1,0 +1,7 @@
+---
+# Defaults for the PostgreSQL tier (the database_hosts group). RAM/CPU-derived tuning
+# (shared_buffers, max_connections, ...) is computed inside roles/postgresql from the
+# instance_type surfaced by Terraform — don't pin those here.
+
+postgres_listen_address: "*"
+postgres_port: 5432

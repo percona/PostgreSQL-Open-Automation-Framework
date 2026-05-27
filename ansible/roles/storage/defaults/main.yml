@@ -1,0 +1,9 @@
+---
+# storage role defaults. Override per-cloud in inventory/<cloud>/group_vars/.
+
+# Where the Terraform-attached data disk is mounted. The PG data_dir lives under this.
+postgres_mount_point: /var/lib/postgresql
+
+# Filesystem to create on the data disk. ext4 is the safe default; xfs is also fine
+# and slightly better for large WAL volumes.
+postgres_data_disk_fs: ext4

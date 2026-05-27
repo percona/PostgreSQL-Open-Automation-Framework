@@ -2,7 +2,13 @@
 # Per-cloud overrides for the GCP inventory. Hand-edited; survives sync-inventory.sh.
 provider: gcp
 
-# Uncomment to override the cross-cloud defaults in ansible/group_vars/all.yml:
-# pg_distribution: pgdg
-# postgres_version: 16
+# Per-cloud overrides go here. Vars set in this file outrank role defaults, so you can
+# override anything a role defines in its defaults/ — for example:
+# timezone: America/New_York      # roles/common
+# etcd_scheme: https              # roles/etcd
+# postgres_data_disk_fs: xfs      # roles/storage
 # region: us-central1
+#
+# NOTE: pg_distribution / postgres_version currently live in playbooks/group_vars/all.yml
+# (cross-play globals), which outrank inventory group_vars — overriding them here has no
+# effect yet. They move to role defaults when the pg_repos/postgresql roles are built.

@@ -8,12 +8,37 @@
     - name: SSH and Python reachable
       ansible.builtin.ping:
 
-- name: Cluster health (planned)
-  hosts: database_hosts[0]
+- name: etcd cluster health
+  hosts: etcd_cluster[0]
   gather_facts: false
+  vars:
+    # This play carries no etcd role, so fall back to the role's defaults. An override
+    # in inventory/<cloud>/group_vars still flows through (it outranks these defaults).
+    etcd_local_endpoint: "{{ etcd_scheme | default('http') }}://127.0.0.1:{{ etcd_client_port | default(2379) }}"
+  environment:
+    ETCDCTL_API: "3"
+    # etcdctl lives in /usr/bin (package install) or /usr/local/bin (binary install).
+    PATH: "/usr/local/bin:/usr/bin:/bin"
   tasks:
-    - name: "TODO — patronictl list, pg_isready on every db host, replication lag, etcd member list"
+    - name: List etcd members
+      ansible.builtin.command: "etcdctl --endpoints={{ etcd_local_endpoint }} -w json member list"
+      register: etcd_members
+      changed_when: false
+
+    - name: Assert every inventory member joined the cluster
+      ansible.builtin.assert:
+        that:
+          - (etcd_members.stdout | from_json).members | length == groups['etcd_cluster'] | length
+        fail_msg: >-
+          etcd reports {{ (etcd_members.stdout | from_json).members | length }} member(s)
+          but inventory lists {{ groups['etcd_cluster'] | length }}.
+        success_msg: "All {{ groups['etcd_cluster'] | length }} etcd members present."
+
+    - name: Check health of every member (non-zero exit if any is unhealthy)
+      ansible.builtin.command: "etcdctl --endpoints={{ etcd_local_endpoint }} endpoint health --cluster"
+      register: etcd_cluster_health
+      changed_when: false
+
+    - name: Show cluster health
       ansible.builtin.debug:
-        msg: >-
-          Cluster health assertions will be implemented alongside the etcd / patroni
-          roles. Until then, this play just confirms SSH reachability above.
+        msg: "{{ etcd_cluster_health.stdout_lines + etcd_cluster_health.stderr_lines }}"

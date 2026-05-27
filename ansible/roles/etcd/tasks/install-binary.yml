@@ -1,0 +1,75 @@
+---
+# install-binary.yml — install etcd from the upstream static release tarball, and
+# create the service account it runs as. Idempotent: the download is skipped when the
+# pinned version is already present. (The package method gets its user from the package.)
+
+- name: "[etcd] create etcd group"
+  ansible.builtin.group:
+    name: "{{ etcd_group }}"
+    system: true
+
+- name: "[etcd] create etcd system user"
+  ansible.builtin.user:
+    name: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ etcd_data_dir }}"
+    create_home: false
+
+- name: "[etcd] check for an existing etcd binary"
+  ansible.builtin.stat:
+    path: "{{ etcd_bin_dir }}/etcd"
+  register: etcd_binary
+
+- name: "[etcd] read installed etcd version"
+  ansible.builtin.command: "{{ etcd_bin_dir }}/etcd --version"
+  register: etcd_version_check
+  changed_when: false
+  failed_when: false
+  when: etcd_binary.stat.exists
+
+# True when no binary is present, or the present one isn't the pinned version.
+- name: "[etcd] decide whether (re)install is needed"
+  ansible.builtin.set_fact:
+    etcd_needs_install: >-
+      {{ not etcd_binary.stat.exists
+         or ('etcd Version: ' ~ etcd_version) not in (etcd_version_check.stdout | default('')) }}
+
+- name: "[etcd] download and install binaries"
+  when: etcd_needs_install
+  block:
+    - name: "[etcd] download release tarball"
+      ansible.builtin.get_url:
+        url: "{{ etcd_download_url }}"
+        dest: "/tmp/{{ etcd_archive_name }}.tar.gz"
+        mode: "0644"
+
+    - name: "[etcd] extract tarball"
+      ansible.builtin.unarchive:
+        src: "/tmp/{{ etcd_archive_name }}.tar.gz"
+        dest: /tmp
+        remote_src: true
+
+    - name: "[etcd] install etcd binaries"
+      ansible.builtin.copy:
+        src: "/tmp/{{ etcd_archive_name }}/{{ item }}"
+        dest: "{{ etcd_bin_dir }}/{{ item }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - etcd
+        - etcdctl
+        - etcdutl
+      notify: Restart etcd
+
+  always:
+    - name: "[etcd] clean up download artifacts"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/{{ etcd_archive_name }}.tar.gz"
+        - "/tmp/{{ etcd_archive_name }}"

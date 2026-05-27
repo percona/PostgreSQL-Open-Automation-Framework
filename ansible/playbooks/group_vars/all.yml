@@ -1,0 +1,27 @@
+---
+# Cross-play framework globals. This directory is adjacent to the playbooks, so it
+# loads on every run regardless of which inventory (-i inventory/<cloud>) is used.
+#
+# These are values consumed across multiple plays. Vars that belong to a single role
+# live in that role's defaults/ instead (e.g. timezone -> roles/common, etcd ports ->
+# roles/etcd) so inventory/<cloud>/group_vars can override them per-cloud.
+
+# Cluster identity. Used by etcd (initial-cluster-token) and, later, by Patroni.
+cluster_name: poaf
+
+# PostgreSQL distribution and version. Consumed by the (not-yet-implemented) pg_repos,
+# postgresql, and patroni roles across separate plays, so they live here for now.
+# NOTE: when those roles land, move pg_distribution/postgres_version into their
+# defaults/ if you need per-cloud overrides — playbook group_vars outrank inventory
+# group_vars, so an override in inventory/<cloud>/group_vars would not take effect here.
+pg_distribution: percona      # percona (PDPG) or pgdg (community)
+postgres_version: 17          # PDPG ships 16 and 17
+
+# PG data layout. Must resolve to a path under roles/storage's mount point.
+postgres_data_dir: "/var/lib/postgresql/{{ postgres_version }}/data"
+postgres_wal_dir: "{{ postgres_data_dir }}/pg_wal"
+
+# Optional-component toggles, read by site.yml / the phased playbooks.
+pgbackrest_enabled: false
+pmm_enabled: false
+haproxy_enabled: false

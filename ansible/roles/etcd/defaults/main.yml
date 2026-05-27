@@ -1,0 +1,62 @@
+---
+# etcd role defaults. Cluster topology comes from the etcd_cluster inventory group.
+# Override any of these per-cloud in inventory/<cloud>/group_vars/ (inventory
+# group_vars beat role defaults).
+
+# Install source for etcd:
+#   package — Percona Distribution for PostgreSQL repo (PDPG). The default: this is
+#             automation for Percona customers, so etcd comes from Percona's curated,
+#             security-maintained packages, on both Debian/Ubuntu and RHEL/Rocky.
+#   binary  — download the upstream static release tarball (air-gapped / non-Percona).
+etcd_install_method: package
+
+# Cluster wiring. listen/advertise ports and the client scheme.
+etcd_client_port: 2379
+etcd_peer_port: 2380
+etcd_scheme: http                  # set to "https" once client/peer certs are configured
+etcd_initial_cluster_state: new    # toggled to "existing" when growing the cluster
+
+# --- package method (Percona repo) ---------------------------------------------
+# Percona repo to enable via `percona-release setup`. etcd ships in the PDPG repo
+# (ppg-<major>), tracking the version curated by Percona for this PG release.
+etcd_percona_repo: "ppg-{{ postgres_version }}"
+# Also enable EPEL on RHEL-like (Patroni/etcd deps live there).
+etcd_enable_epel: true
+# Packages per OS family, per the Percona HA setup docs.
+etcd_packages_map:
+  Debian: [etcd, etcd-server, etcd-client]
+  RedHat: [etcd, python3-python-etcd]
+etcd_packages: "{{ etcd_packages_map[ansible_os_family] }}"
+
+# --- binary method (upstream tarball) ------------------------------------------
+etcd_version: "3.5.30"                                  # matches Percona's current PDPG etcd
+etcd_download_base: "https://github.com/etcd-io/etcd/releases/download"
+etcd_arch_map:
+  x86_64: amd64
+  aarch64: arm64
+etcd_arch: "{{ etcd_arch_map[ansible_architecture] | default('amd64') }}"
+etcd_archive_name: "etcd-v{{ etcd_version }}-linux-{{ etcd_arch }}"
+etcd_download_url: "{{ etcd_download_base }}/v{{ etcd_version }}/{{ etcd_archive_name }}.tar.gz"
+etcd_bin_dir: /usr/local/bin                            # where the binary method installs
+
+# --- common to both methods ----------------------------------------------------
+etcd_user: etcd
+etcd_group: etcd
+etcd_conf_dir: /etc/etcd
+# Percona's etcd package reads /etc/etcd/etcd.conf.yaml; use that path for both methods
+# so the package method overwrites the shipped sample rather than leaving two configs.
+etcd_config_file: "{{ etcd_conf_dir }}/etcd.conf.yaml"
+etcd_data_dir: /var/lib/etcd
+
+# Resolved binary locations. The package installs to /usr/bin; the binary method to
+# etcd_bin_dir. We run etcd under our own systemd unit either way (so behaviour is
+# identical across methods and distros), pointed at whichever binary is present.
+etcd_server_bin: "{{ '/usr/bin/etcd' if etcd_install_method == 'package' else etcd_bin_dir ~ '/etcd' }}"
+etcd_ctl_bin: "{{ '/usr/bin/etcdctl' if etcd_install_method == 'package' else etcd_bin_dir ~ '/etcdctl' }}"
+
+# Token isolates this cluster's bootstrap from any other etcd on the network.
+etcd_initial_cluster_token: "{{ cluster_name }}-etcd"
+
+# Address this node advertises to peers/clients. Use the private IP from inventory;
+# fall back to ansible_host so external etcd members (no private_ip) still work.
+etcd_advertise_ip: "{{ private_ip | default(ansible_host) }}"

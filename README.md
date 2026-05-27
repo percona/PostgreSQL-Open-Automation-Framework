@@ -4,9 +4,10 @@ An open framework for provisioning the infrastructure and (eventually)
 configuring the software stack behind a PostgreSQL deployment, across the
 major public clouds.
 
-The current scope is **VM provisioning + Ansible inventory generation**.
-Downstream Ansible playbooks consume the generated inventory to install and
-configure PostgreSQL on the provisioned fleet.
+The Terraform layer (**VM provisioning + Ansible inventory generation**) is
+functional across all three clouds. The Ansible layer consumes that inventory to
+configure the fleet; it currently lands OS prep and a 3-node etcd cluster (from the
+Percona PostgreSQL repository), with PostgreSQL + Patroni next.
 
 ## Layout
 
@@ -52,9 +53,12 @@ This is an early, in-development project.
 - **Terraform layer:** functional across GCP, AWS and Azure. Renders both YAML
   (primary) and INI (compat) Ansible inventory plus a sensitive
   `credentials.json` sidecar after every `terraform apply`.
-- **Ansible layer:** design and documentation are published
-  ([ansible/doc/](ansible/doc/)). Roles and playbooks are not yet implemented
-  — contributions welcome.
+- **Ansible layer:** OS prep (`common`) and a 3-node **etcd** cluster are
+  implemented and deploy + verify green (etcd installed from the **Percona
+  Distribution for PostgreSQL** repo by default, on Debian/Ubuntu and RHEL/Rocky;
+  tested live on Ubuntu). PostgreSQL, Patroni, backups, and monitoring roles are
+  still in progress. See [ansible/doc/README.md](ansible/doc/README.md) for the
+  current state and usage — contributions welcome.
 
 ## License
 

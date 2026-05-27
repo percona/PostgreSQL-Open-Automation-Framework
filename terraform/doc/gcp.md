@@ -135,6 +135,10 @@ gcp_region  = "us-central1"           # optional, this is the default
 gcp_zone    = "us-central1-a"         # optional, this is the default
 gcp_image   = "ubuntu-os-cloud/ubuntu-2204-lts"  # optional
 ```
+Note: You can get the list of valid gcp images by using the command. Use the FAMILY in `gcp_image`
+```
+gcloud compute images list --project=ubuntu-os-cloud --filter="family ~ 'ubuntu-2404'" --format="table(name, family, status)"
+```
 
 In your shell (only if you used **Option B** above):
 ```bash

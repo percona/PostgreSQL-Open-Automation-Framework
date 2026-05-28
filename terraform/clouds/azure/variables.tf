@@ -89,3 +89,17 @@ variable "azure_image" {
   type        = string
   default     = "Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest"
 }
+
+variable "azure_image_plan" {
+  description = <<-EOT
+    Marketplace plan for images that require terms acceptance (Rocky, AlmaLinux, …).
+    Leave null for images that don't need it (Canonical Ubuntu, etc.).
+    For Rocky 9: { publisher = "resf", product = "rockylinux-x86_64", name = "9-base" }.
+  EOT
+  type = object({
+    publisher = string
+    product   = string
+    name      = string
+  })
+  default = null
+}

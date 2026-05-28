@@ -47,7 +47,14 @@ azure_resource_group = "poaf-rg"
 # You must accept the Marketplace terms once per subscription before apply:
 #   az vm image terms accept --urn resf:rockylinux-x86_64:9-base:latest
 # Rocky's default cloud-init user is "rocky", not "ubuntu".
+# Marketplace images additionally need an `azure_image_plan` matching the
+# accepted terms — without it the VM creation fails with VMMarketplaceInvalidInput.
 # See doc/azure.md §5 for the full walkthrough.
 #
 # ssh_user    = "rocky"
 # azure_image = "resf:rockylinux-x86_64:9-base:latest"   # or 8-base:latest
+# azure_image_plan = {
+#   publisher = "resf"
+#   product   = "rockylinux-x86_64"
+#   name      = "9-base"   # must match the SKU
+# }

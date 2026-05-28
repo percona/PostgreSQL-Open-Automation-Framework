@@ -18,8 +18,11 @@ Each guide covers the same four things, in this order:
    `terraform apply` succeeds.
 
 Each guide also has a **Section 5 — Switching to Rocky Linux 8 / 9** that
-shows the tfvars-only override (image + `ssh_user`) needed to boot Rocky
-instead of the default Ubuntu 22.04.
+shows the tfvars-only override needed to boot Rocky instead of the default
+Ubuntu 22.04. The override is image + `ssh_user` on GCP and AWS; on Azure
+it additionally requires `azure_image_plan` and a one-time
+`az vm image terms accept`, because Rocky on Azure ships through the
+Marketplace.
 
 Each cloud is a fully independent Terraform root — you only need credentials
 for the cloud whose directory you're working in.

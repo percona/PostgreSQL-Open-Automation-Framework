@@ -168,7 +168,8 @@ az vm image terms accept --urn resf:rockylinux-x86_64:9-base:latest
 az vm image terms accept --urn resf:rockylinux-x86_64:8-base:latest
 ```
 Without this, `terraform apply` fails with
-`PurchasePlanNotAccepted` / `MarketplacePurchaseEligibilityFailed`.
+`PurchasePlanNotAccepted` / `MarketplacePurchaseEligibilityFailed` when the
+VM resource is created.
 
 ### 5.2 Confirm the image is available in your location
 ```bash
@@ -184,11 +185,25 @@ In `clouds/azure/terraform.tfvars`:
 ```hcl
 azure_image = "resf:rockylinux-x86_64:9-base:latest"   # or 8-base:latest
 ssh_user    = "rocky"                                  # Rocky's default user
+
+# Marketplace images additionally need a `plan` block matching the
+# accepted terms — without it, VM creation fails with VMMarketplaceInvalidInput
+# even though `az vm image terms accept` succeeded.
+azure_image_plan = {
+  publisher = "resf"
+  product   = "rockylinux-x86_64"
+  name      = "9-base"   # must match the SKU in azure_image
+}
 ```
 
 The `azure_image` string is `publisher:offer:sku:version`, split by the module
 and fed straight to `source_image_reference`. To pin a specific build, replace
 `latest` with the version tag returned by step 5.2.
+
+`azure_image_plan` defaults to `null`, which is correct for images that don't
+require Marketplace terms (Ubuntu, RHEL pay-as-you-go via the `RedHat`
+publisher, etc.). It's only needed when you also had to run
+`az vm image terms accept`.
 
 Heads-up for the downstream Ansible run:
 - SELinux is **enforcing** by default on Rocky. Roles that touch system
@@ -210,5 +225,7 @@ Heads-up for the downstream Ansible run:
 | `AuthorizationFailed: …does not have authorization to perform action 'Microsoft.Compute/…'` | SP role too narrow | Grant `Contributor` on the subscription or RG |
 | `SubscriptionNotFound` | Wrong `ARM_SUBSCRIPTION_ID` | `az account list` and copy the correct one |
 | `LocationNotAvailableForResourceType` | SKU not offered in `azure_location` | Pick a different region or VM size |
+| `VMMarketplaceInvalidInput: …requires Plan information…` | Marketplace image (Rocky, Alma, …) without `azure_image_plan` | Set `azure_image_plan` to match the accepted URN — see §5.3 |
+| `PurchasePlanNotAccepted` / `MarketplacePurchaseEligibilityFailed` | Marketplace terms not accepted on this subscription | `az vm image terms accept --urn <publisher>:<offer>:<sku>:latest` — see §5.1 |
 | `OperationNotAllowed: Quota exceeded` | Sub-level vCPU quota | Open a quota-increase request in the portal |
 | Slow plan, hangs talking to `login.microsoftonline.com` | Corporate proxy | Set `HTTPS_PROXY` env var consistently for both `az` and `terraform` |

@@ -1,0 +1,22 @@
+---
+# pg_repos role defaults. Owns the single configuration point for the Percona PPG
+# (or community PGDG) package repository, so every other role can install from a
+# consistent source driven by postgres_version.
+#
+# Override hook for callers:
+#   pg_repos_repo — pass a specific repo identifier to enable when include_role'ing
+#                   this role (e.g. roles/etcd passes etcd_percona_repo). Defaults to
+#                   pg_percona_repo when not set, so the common case "everyone uses
+#                   the same PPG repo for postgres_version" needs no parameter.
+#
+# Override hook for the cluster:
+#   pg_percona_repo — change this in inventory/<cloud>/group_vars/ to install all
+#                     packages from a different ppg-<N> than postgres_version implies.
+
+# Canonical Percona PPG repository for this cluster. ppg-<major> tracks the version
+# curated by Percona for this PostgreSQL release. Every consumer (etcd, postgresql,
+# patroni, pgbackrest, pmm_client) defaults to installing from here.
+pg_percona_repo: "ppg-{{ postgres_version }}"
+
+# Enable EPEL on RHEL-like (etcd/Patroni deps live there). No-op on Debian/Ubuntu.
+pg_repos_enable_epel: true

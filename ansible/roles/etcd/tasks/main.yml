@@ -5,7 +5,7 @@
 # runs all members in parallel so the Type=notify units form quorum together on first
 # boot.
 #
-# etcd_install_method selects the source: "package" (Percona PDPG repo, default) or
+# etcd_install_method selects the source: "package" (Percona PPG repo, default) or
 # "binary" (upstream tarball). Either way we run etcd under our own systemd unit
 # pointed at etcd_server_bin, so behaviour is identical across methods and distros.
 

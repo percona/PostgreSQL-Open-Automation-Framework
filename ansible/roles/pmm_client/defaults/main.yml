@@ -1,0 +1,9 @@
+---
+# pmm_client role defaults. Override per-cloud in inventory/<cloud>/group_vars/.
+
+# Per-role override hook for the PPG repo the PMM client installs from. Defaults to
+# the cluster-wide pg_percona_repo (ppg-<postgres_version>) set by pg_repos. PMM
+# client itself comes from the `pmm-client` Percona repo on most installs; flip
+# this if you want to pull it from a specific ppg-<N> alongside the rest of the
+# stack instead.
+pmm_client_percona_repo: "{{ pg_percona_repo }}"

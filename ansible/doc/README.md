@@ -2,17 +2,21 @@
 
 The Ansible layer of **PostgreSQL-Open-Automation-Framework** takes the VM fleet
 provisioned by Terraform and installs a production-style PostgreSQL HA stack on top:
-**Percona Distribution for PostgreSQL + Patroni + etcd**, with optional pgBackRest
+**Percona PPG (Percona PostgreSQL) + Patroni + etcd**, with optional pgBackRest
 backups, HAProxy routing, and Percona Monitoring and Management (PMM).
 
-> **Status (2026-05-27):** the OS-prep (`common`) and `etcd` roles are implemented. A
-> 3-node **etcd** cluster — the distributed store Patroni uses — deploys and verifies
-> green, with etcd installed from the **Percona Distribution for PostgreSQL (PDPG)**
-> repository by default. The PostgreSQL / Patroni / backups / monitoring roles are
-> still stubs. See **[What works today](#what-works-today)** for the exact state.
+> **Status (2026-05-28):** the OS-prep (`common`), `pg_repos`, and `etcd` roles are
+> implemented. A 3-node **etcd** cluster — the distributed store Patroni uses —
+> deploys and verifies green, with etcd installed from the **Percona PPG**
+> repository by default (selected by the cluster-wide `postgres_version`).
+> `pg_repos` is the single owner of `percona-release` + `ppg-<version>` setup; every
+> other role installs from the same source via a `<role>_percona_repo` override
+> hook. The PostgreSQL / Patroni / backups / monitoring roles are still stubs. See
+> **[What works today](#what-works-today)** for the exact state.
 >
-> Tested live on **Ubuntu 24.04**. The **RHEL / Rocky** code paths are written but not
-> yet verified on a live host.
+> Tested live on **Ubuntu 24.04** and **Rocky Linux** (the GCP fleet was rebuilt
+> on Rocky on 2026-05-28 and the full pipeline ran green first-try, including a
+> `changed=0` idempotency re-run).
 
 ---
 
@@ -111,48 +115,80 @@ The framework loads variables from three places, lowest precedence first:
 > value per-cloud it must come from a **role default** (which inventory group_vars beat),
 > not from `playbooks/group_vars/`.
 
+### Choosing the PostgreSQL version (and the repository it pulls from)
+
+The `postgres_version` variable in `playbooks/group_vars/all.yml` is the single
+source of truth for which Percona PPG repository every role installs from:
+
+```yaml
+postgres_version: 17          # PPG ships 16 and 17
+```
+
+`pg_repos` reads this and runs `percona-release setup -y ppg-<postgres_version>`,
+which enables the matching Percona PPG repo on the host. Every consumer role
+(`etcd` today; `postgresql`, `patroni`, `pgbackrest`, `pmm_client` when they
+land) defaults to installing from this same repo.
+
+**Per-role override.** Each consumer role exposes a `<role>_percona_repo`
+variable defaulting to `pg_percona_repo` (i.e. `ppg-<postgres_version>`). Set it
+in `inventory/<cloud>/group_vars/all/cloud.yml` to pin a specific component to a
+different `ppg-<N>` than the cluster-wide version — useful, for example, to test
+a new etcd from `ppg-17` while the rest of the stack stays on `ppg-16`:
+
+```yaml
+postgres_version: 16
+etcd_percona_repo: ppg-17
+```
+
+Available override hooks: `etcd_percona_repo`, `postgresql_percona_repo`,
+`patroni_percona_repo`, `pgbackrest_percona_repo`, `pmm_client_percona_repo`.
+
 ### etcd install source
 
-etcd is installed from the **Percona PDPG repository by default** — this is automation
-for Percona customers, so etcd comes from Percona's curated, security-maintained
-packages. The role exposes one switch (a role default, override it per-cloud in
-`inventory/<cloud>/group_vars/all/cloud.yml`):
+etcd is installed from the **Percona PPG repository by default** — this is
+automation for Percona customers, so etcd comes from Percona's curated,
+security-maintained packages. The role exposes one switch (a role default,
+override it per-cloud in `inventory/<cloud>/group_vars/all/cloud.yml`):
 
 ```yaml
 etcd_install_method: package   # default — apt/yum from the Percona ppg-<version> repo
 # etcd_install_method: binary  # alternative — upstream static release tarball
 ```
 
-- **`package`** (default): runs `percona-release setup ppg-<postgres_version>` and
-  installs etcd from Percona's repo (`etcd etcd-server etcd-client` on Debian/Ubuntu;
-  `etcd python3-python-etcd` + EPEL on RHEL/Rocky). etcd then runs under a systemd unit
-  managed by this role, reading `/etc/etcd/etcd.conf.yaml`.
-- **`binary`**: downloads the pinned upstream etcd release (`etcd_version`, default
-  `3.5.30`) to `/usr/local/bin`. Useful for air-gapped or non-Percona environments.
+- **`package`** (default): delegates repo setup to `pg_repos`
+  (`percona-release setup -y ppg-<postgres_version>`) and installs etcd from
+  Percona's repo (`etcd etcd-server etcd-client` on Debian/Ubuntu;
+  `etcd python3-python-etcd` + EPEL on RHEL/Rocky). etcd then runs under a
+  systemd unit managed by this role, reading `/etc/etcd/etcd.conf.yaml`.
+- **`binary`**: downloads the pinned upstream etcd release (`etcd_version`,
+  default `3.5.30`) to `/usr/local/bin`. Useful for air-gapped or non-Percona
+  environments.
 
-Either way the cluster topology is derived from the `etcd_cluster` inventory group and
-each host's `private_ip`. Useful etcd knobs (all role defaults, all overridable):
+Either way the cluster topology is derived from the `etcd_cluster` inventory
+group and each host's `private_ip`. Useful etcd knobs (all role defaults, all
+overridable):
 
 | Variable | Default | Notes |
 |---|---|---|
 | `etcd_install_method` | `package` | `package` (Percona) or `binary` (upstream) |
-| `etcd_percona_repo` | `ppg-{{ postgres_version }}` | Percona repo enabled for the package method |
+| `etcd_percona_repo` | `{{ pg_percona_repo }}` (= `ppg-{{ postgres_version }}`) | Percona repo enabled for the package method |
 | `etcd_client_port` / `etcd_peer_port` | `2379` / `2380` | |
 | `etcd_scheme` | `http` | set `https` once you wire up certs |
 | `etcd_version` | `3.5.30` | binary method only |
 
 ### Switching PostgreSQL distributions
 
-By default the framework targets **Percona Distribution for PostgreSQL**. To select
-community PGDG instead, set in `playbooks/group_vars/all.yml`:
+By default the framework targets **Percona PPG**. Community **PGDG** is the
+selectable alternative via `playbooks/group_vars/all.yml`:
 
 ```yaml
 pg_distribution: pgdg
 ```
 
-PDPG is the better-tested path; PGDG is supported for compatibility. (Per-cloud override
-of `pg_distribution` will become available once the `pg_repos`/`postgresql` roles move it
-into role defaults — see the precedence note above.)
+PPG is the better-tested path; the PGDG branch in `pg_repos` is not yet
+implemented and the role will fail loudly if `pg_distribution: pgdg` is set.
+(Per-cloud override of `pg_distribution` will become available once the
+`postgresql` role moves it into role defaults — see the precedence note above.)
 
 ### Operating-system support
 
@@ -170,7 +206,7 @@ Debian/Ubuntu path is currently tested on live hosts.
 | OS prep | packages, timezone, locale, chrony/NTP, sysctl, ulimits | **Done** |
 | Storage | mkfs + mount of the data disk at `/var/lib/postgresql` | Planned (defaults only) |
 | etcd | 3-node etcd cluster on the `etcd_cluster` group (Percona repo by default) | **Done** |
-| PostgreSQL | PDPG (or PGDG) packages, base config, `data_directory` under the mounted disk | Planned |
+| PostgreSQL | PPG (or PGDG) packages, base config, `data_directory` under the mounted disk | Planned |
 | Patroni | DCS-backed automatic failover, REST API on each node, systemd unit | Planned |
 | Backups *(optional)* | pgBackRest, full + diff schedule, repo on cloud object storage | Planned |
 | Routing *(optional)* | HAProxy with R/W and R/O endpoints driven by Patroni's REST API | Planned |

@@ -97,6 +97,18 @@ resource "azurerm_linux_virtual_machine" "vm" {
     sku       = local.image_parts[2]
     version   = local.image_parts[3]
   }
+
+  # Marketplace images (Rocky, AlmaLinux, …) require a `plan` block matching
+  # the terms accepted via `az vm image terms accept`. Omitted (null) for
+  # images that don't need it (Ubuntu, etc.).
+  dynamic "plan" {
+    for_each = var.image_plan == null ? [] : [var.image_plan]
+    content {
+      publisher = plan.value.publisher
+      product   = plan.value.product
+      name      = plan.value.name
+    }
+  }
 }
 
 resource "azurerm_managed_disk" "data" {

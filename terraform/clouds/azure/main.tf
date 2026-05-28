@@ -69,6 +69,7 @@ module "vms" {
   location       = var.azure_location
   resource_group = var.azure_resource_group
   image          = var.azure_image
+  image_plan     = var.azure_image_plan
   ssh_user       = var.ssh_user
   ssh_public_key = data.local_file.ssh_public_key.content
 

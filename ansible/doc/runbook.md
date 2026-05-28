@@ -38,7 +38,7 @@ cheap external healthcheck.
 
 ## Inspecting etcd directly
 
-etcd is installed from the Percona PDPG repo by default (`etcd_install_method: package`),
+etcd is installed from the Percona PPG repo by default (`etcd_install_method: package`),
 so `etcdctl` is on `PATH` (`/usr/bin/etcdctl`). On any etcd node:
 
 ```bash

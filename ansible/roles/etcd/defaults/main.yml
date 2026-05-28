@@ -4,9 +4,9 @@
 # group_vars beat role defaults).
 
 # Install source for etcd:
-#   package — Percona Distribution for PostgreSQL repo (PDPG). The default: this is
-#             automation for Percona customers, so etcd comes from Percona's curated,
-#             security-maintained packages, on both Debian/Ubuntu and RHEL/Rocky.
+#   package — Percona PPG repo (configured by the pg_repos role). The default: this
+#             is automation for Percona customers, so etcd comes from Percona's
+#             curated, security-maintained packages, on both Debian/Ubuntu and RHEL/Rocky.
 #   binary  — download the upstream static release tarball (air-gapped / non-Percona).
 etcd_install_method: package
 
@@ -17,11 +17,11 @@ etcd_scheme: http                  # set to "https" once client/peer certs are c
 etcd_initial_cluster_state: new    # toggled to "existing" when growing the cluster
 
 # --- package method (Percona repo) ---------------------------------------------
-# Percona repo to enable via `percona-release setup`. etcd ships in the PDPG repo
-# (ppg-<major>), tracking the version curated by Percona for this PG release.
-etcd_percona_repo: "ppg-{{ postgres_version }}"
-# Also enable EPEL on RHEL-like (Patroni/etcd deps live there).
-etcd_enable_epel: true
+# Per-role override hook for the PPG repo etcd installs from. Defaults to the
+# cluster-wide pg_percona_repo (ppg-<postgres_version>) set by pg_repos. Override
+# here (or in inventory/<cloud>/group_vars/) to pin etcd to a different ppg-<N>
+# than the rest of the stack.
+etcd_percona_repo: "{{ pg_percona_repo }}"
 # Packages per OS family, per the Percona HA setup docs.
 etcd_packages_map:
   Debian: [etcd, etcd-server, etcd-client]
@@ -29,7 +29,7 @@ etcd_packages_map:
 etcd_packages: "{{ etcd_packages_map[ansible_os_family] }}"
 
 # --- binary method (upstream tarball) ------------------------------------------
-etcd_version: "3.5.30"                                  # matches Percona's current PDPG etcd
+etcd_version: "3.5.30"                                  # matches Percona's current PPG etcd
 etcd_download_base: "https://github.com/etcd-io/etcd/releases/download"
 etcd_arch_map:
   x86_64: amd64

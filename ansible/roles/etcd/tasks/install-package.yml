@@ -1,13 +1,19 @@
 ---
-# install-package.yml — install etcd from the Percona PDPG repository (default).
+# install-package.yml — install etcd from the Percona PPG repository (default).
 #
 # The Debian etcd package auto-starts a single-node etcd in its postinst, which fails
 # on a not-yet-clustered node and aborts dpkg. We install behind a policy-rc.d deny
 # shim so the postinst's service start is skipped; we bring etcd up ourselves later
 # (main.yml installs our own unit, which shadows the packaged one).
 
-- name: "[etcd] configure Percona repository"
-  ansible.builtin.include_tasks: percona_repo.yml
+# Delegate repo setup to pg_repos. etcd_percona_repo defaults to pg_percona_repo
+# (ppg-<postgres_version>), but can be pinned independently to install etcd from a
+# different ppg-<N> than the rest of the stack.
+- name: "[etcd] configure Percona PPG repository"
+  ansible.builtin.include_role:
+    name: pg_repos
+  vars:
+    pg_repos_repo: "{{ etcd_percona_repo }}"
 
 - name: "[etcd] check whether etcd is already installed"
   ansible.builtin.stat:

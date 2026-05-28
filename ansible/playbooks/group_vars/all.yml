@@ -14,8 +14,10 @@ cluster_name: poaf
 # NOTE: when those roles land, move pg_distribution/postgres_version into their
 # defaults/ if you need per-cloud overrides — playbook group_vars outrank inventory
 # group_vars, so an override in inventory/<cloud>/group_vars would not take effect here.
-pg_distribution: percona      # percona (PDPG) or pgdg (community)
-postgres_version: 17          # PDPG ships 16 and 17
+pg_distribution: percona      # percona (PPG) or pgdg (community)
+postgres_version: 17          # PPG ships 16 and 17. Drives pg_repos' enabled
+                              # repository (ppg-<postgres_version>), which every
+                              # consumer role installs from by default.
 
 # PG data layout. Must resolve to a path under roles/storage's mount point.
 postgres_data_dir: "/var/lib/postgresql/{{ postgres_version }}/data"

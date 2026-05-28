@@ -1,0 +1,6 @@
+---
+# patroni role defaults. Override per-cloud in inventory/<cloud>/group_vars/.
+
+# Per-role override hook for the PPG repo Patroni installs from. Defaults to the
+# cluster-wide pg_percona_repo (ppg-<postgres_version>) set by pg_repos.
+patroni_percona_repo: "{{ pg_percona_repo }}"

@@ -157,7 +157,8 @@ operator knows — these live in role defaults, `playbooks/group_vars/`, the per
 |---|---|---|
 | `etcd_install_method: package\|binary` | role default; override per-cloud in `cloud.yml` | `package` (Percona repo) |
 | `pg_distribution: percona\|pgdg` | `playbooks/group_vars/all.yml` | `percona` |
-| `postgres_version` | `playbooks/group_vars/all.yml` | latest supported PDPG |
+| `postgres_version` | `playbooks/group_vars/all.yml` | latest supported PPG |
+| `<role>_percona_repo` (e.g. `etcd_percona_repo`) | role default; override per-cloud in `cloud.yml` | `ppg-{{ postgres_version }}` (via `pg_percona_repo`) |
 | `pgbackrest_enabled: true` and repo config | `playbooks/group_vars/all.yml` | disabled |
 | PMM server URL + token | `playbooks/group_vars/all.yml` (or vault) | disabled |
 | External etcd member SSH details | `host_vars/<name>.yml` | — |

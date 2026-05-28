@@ -1,0 +1,6 @@
+---
+# pgbackrest role defaults. Override per-cloud in inventory/<cloud>/group_vars/.
+
+# Per-role override hook for the PPG repo pgBackRest installs from. Defaults to the
+# cluster-wide pg_percona_repo (ppg-<postgres_version>) set by pg_repos.
+pgbackrest_percona_repo: "{{ pg_percona_repo }}"

@@ -1,16 +1,84 @@
 ---
-# pg_repos — configure the package repository for the chosen PG distribution.
-# Branches on pg_distribution: percona (PDPG, default) or pgdg (community).
-# TODO: implement repo setup tasks; expose postgresql_packages, postgresql_service_name.
-
-- name: "[pg_repos] scaffold — not yet implemented"
-  ansible.builtin.debug:
-    msg: >-
-      Placeholder for repo setup on {{ inventory_hostname }}.
-      Will configure {{ pg_distribution }} repos for PostgreSQL {{ postgres_version }}.
+# pg_repos — subscribe the host to Percona's repositories and enable the PPG
+# (ppg-<major>) repo that ships PostgreSQL, etcd, Patroni, pgBackRest, and PMM.
+# Idempotent.
+#
+# Callers normally include this role without parameters, which enables
+# `pg_percona_repo` (ppg-<postgres_version>). To pin a specific consumer to a
+# different ppg-<N>, pass `pg_repos_repo` via include_role vars, e.g.:
+#
+#   - include_role: { name: pg_repos }
+#     vars:
+#       pg_repos_repo: "{{ etcd_percona_repo }}"
+#
+# pg_distribution: pgdg (community PGDG) is a future branch; for now this role
+# only configures the PPG path.
 
 - name: "[pg_repos] validate pg_distribution value"
   ansible.builtin.assert:
     that:
       - pg_distribution in ['percona', 'pgdg']
     fail_msg: "pg_distribution must be 'percona' or 'pgdg', got: {{ pg_distribution }}"
+
+- name: "[pg_repos] pgdg path not implemented yet"
+  ansible.builtin.fail:
+    msg: >-
+      pg_distribution=pgdg is not implemented yet; only 'percona' (PPG) is supported.
+  when: pg_distribution == 'pgdg'
+
+- name: "[pg_repos] resolve repo to enable"
+  ansible.builtin.set_fact:
+    pg_repos_repo_effective: "{{ pg_repos_repo | default(pg_percona_repo) }}"
+
+- name: "[pg_repos] check whether percona-release is installed"
+  ansible.builtin.stat:
+    path: /usr/bin/percona-release
+  register: pg_repos_percona_release_bin
+
+- name: "[pg_repos] install percona-release (Debian/Ubuntu)"
+  when:
+    - ansible_os_family == 'Debian'
+    - not pg_repos_percona_release_bin.stat.exists
+  block:
+    - name: "[pg_repos] fetch percona-release .deb"
+      ansible.builtin.get_url:
+        url: "https://repo.percona.com/apt/percona-release_latest.{{ ansible_distribution_release }}_all.deb"
+        dest: "/tmp/percona-release_latest_{{ ansible_distribution_release }}.deb"
+        mode: "0644"
+
+    - name: "[pg_repos] install percona-release .deb (resolves deps)"
+      ansible.builtin.apt:
+        deb: "/tmp/percona-release_latest_{{ ansible_distribution_release }}.deb"
+        update_cache: true
+
+- name: "[pg_repos] install percona-release (RHEL/Rocky)"
+  ansible.builtin.dnf:
+    name: "https://repo.percona.com/yum/percona-release-latest.noarch.rpm"
+    state: present
+    disable_gpg_check: true
+  when:
+    - ansible_os_family == 'RedHat'
+    - not pg_repos_percona_release_bin.stat.exists
+
+- name: "[pg_repos] enable EPEL (RHEL/Rocky)"
+  ansible.builtin.dnf:
+    name: epel-release
+    state: present
+  when:
+    - ansible_os_family == 'RedHat'
+    - pg_repos_enable_epel | bool
+
+- name: "[pg_repos] show enabled Percona repositories"
+  ansible.builtin.command: percona-release show
+  register: pg_repos_percona_show
+  changed_when: false
+
+# `percona-release setup` disables other Percona repos and enables only this one,
+# then refreshes the package DB. Guarded so we don't re-run (and churn the cache)
+# every time, and so a per-role override flips the enabled repo only when it
+# actually differs from what's already configured.
+- name: "[pg_repos] enable the Percona PPG repository ({{ pg_repos_repo_effective }})"
+  ansible.builtin.command: "percona-release setup -y {{ pg_repos_repo_effective }}"
+  register: pg_repos_percona_setup
+  changed_when: true
+  when: pg_repos_repo_effective not in pg_repos_percona_show.stdout

@@ -8,6 +8,15 @@
     - name: SSH and Python reachable
       ansible.builtin.ping:
 
+- name: Storage mount check
+  hosts: database_hosts
+  gather_facts: false
+  tasks:
+    - name: Assert data disk is mounted
+      ansible.builtin.command: "mountpoint -q {{ postgres_mount_point | default('/var/lib/postgresql') }}"
+      changed_when: false
+      when: data_disk_device is defined and data_disk_device | length > 0
+
 - name: PostgreSQL install check
   hosts: database_hosts
   gather_facts: true

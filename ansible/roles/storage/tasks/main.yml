@@ -1,13 +1,30 @@
 ---
 # storage — format and mount the Terraform-attached data disk at
-# {{ postgres_mount_point }} so PG/Patroni can put data on it.
-# TODO: implement. Will use data_disk_device (from inventory) and
-# postgres_data_disk_fs (from group_vars/database_hosts.yml).
+# {{ postgres_mount_point }}.
+# Skips gracefully when data_disk_device is absent (etcd-only nodes that
+# carry no data disk in the Terraform inventory).
 
-- name: "[storage] scaffold — not yet implemented"
-  ansible.builtin.debug:
-    msg: >-
-      Placeholder for data-disk setup on {{ inventory_hostname }}.
-      Will mkfs.{{ postgres_data_disk_fs }} on
-      {{ data_disk_device | default('<missing data_disk_device>') }}
-      and mount at {{ postgres_mount_point }}.
+- name: "[storage] skip hosts with no attached data disk"
+  ansible.builtin.meta: end_host
+  when: data_disk_device is not defined or not data_disk_device
+
+- name: "[storage] create {{ postgres_data_disk_fs }} filesystem on data disk"
+  community.general.filesystem:
+    fstype: "{{ postgres_data_disk_fs }}"
+    dev: "{{ data_disk_device }}"
+
+- name: "[storage] ensure mount point exists"
+  ansible.builtin.file:
+    path: "{{ postgres_mount_point }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: "[storage] mount data disk and persist to fstab"
+  ansible.posix.mount:
+    path: "{{ postgres_mount_point }}"
+    src: "{{ data_disk_device }}"
+    fstype: "{{ postgres_data_disk_fs }}"
+    opts: defaults,noatime
+    state: mounted

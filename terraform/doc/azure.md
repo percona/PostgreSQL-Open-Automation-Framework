@@ -173,11 +173,7 @@ VM resource is created.
 
 ### 5.2 Confirm the image is available in your location
 ```bash
-az vm image list \
-  --publisher resf \
-  --offer rockylinux-x86_64 \
-  --location "$(az vm image list --publisher resf --query '[0].location' -o tsv 2>/dev/null || echo eastus)" \
-  --all --output table
+az vm image list --publisher resf --offer rockylinux-x86_64 --all --output table
 ```
 
 ### 5.3 Set the tfvars overrides

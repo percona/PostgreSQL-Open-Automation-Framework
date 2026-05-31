@@ -2,11 +2,13 @@
 
 Common operational procedures for a cluster deployed by this framework.
 
-> **Status (2026-05-27):** the **etcd** healthchecks in `99_verify.yml` are implemented
-> (see below). The Patroni/PostgreSQL-specific procedures — switchover, replica reinit,
-> rolling restart, backups — are still **planned**; the playbooks under
-> `playbooks/ops/` are stubs. Sections marked **[planned]** describe behavior the
-> playbooks will provide once the relevant roles land.
+> **Status (2026-05-31):** the deploy/verify path is fully implemented — `99_verify.yml`
+> checks etcd, **Patroni** (one leader + member count), PostgreSQL reachability, and
+> **HAProxy** routing (see below). The cluster runs PostgreSQL + Patroni + etcd with
+> optional HAProxy. The *wrapper* ops playbooks under `playbooks/ops/` (switchover,
+> replica reinit, rolling restart) are still **stubs** — for now drive those
+> operations with `patronictl` directly, as shown below. Sections marked **[planned]**
+> describe behavior the wrapper playbooks will add once implemented.
 
 ---
 
@@ -20,19 +22,21 @@ ansible-playbook -i inventory/<cloud> playbooks/99_verify.yml
 **Implemented today:**
 
 - SSH + Python reachability on every host (`ping`).
-- etcd member list — asserts the number of members equals the size of the
-  `etcd_cluster` group.
-- etcd cluster health — `etcdctl endpoint health --cluster`; fails if any member is
-  unhealthy, and prints the per-member result.
+- Storage mount check on `database_hosts`.
+- PostgreSQL server binary present on `database_hosts`.
+- etcd member list — asserts the member count equals the `etcd_cluster` group size,
+  plus `etcdctl endpoint health --cluster` (fails if any member is unhealthy).
+- Patroni — queries the REST `/cluster` API on a database host and asserts exactly
+  **one leader** and that every `database_hosts` node is a member.
+- HAProxy (when `haproxy_enabled`) — reads the stats CSV on each `haproxy` node and
+  asserts the read-write (`primary`) and read-only (`standbys`) pools each have an UP
+  backend.
 
-**[planned]** Once Patroni/PostgreSQL land, this playbook will also:
-
-- Run `patronictl -c /etc/patroni/patroni.yml list` on the leader.
-- Check `pg_isready` on every database host.
-- Report `pg_stat_replication` lag for each standby.
+**[planned]** Add `pg_isready` per host and `pg_stat_replication` lag reporting per
+standby.
 
 Run it after any change. Run it as a cron from your monitoring host if you want a
-cheap external healthcheck.
+cheap external healthcheck. Include HAProxy checks with `-e haproxy_enabled=true`.
 
 ---
 
@@ -61,6 +65,54 @@ will not restart a healthy cluster unless the config changed):
 ```bash
 ansible-playbook -i inventory/<cloud> playbooks/10_etcd.yml
 ```
+
+---
+
+## Inspecting Patroni directly
+
+`patronictl` is the source of truth for cluster state. On any database host:
+
+```bash
+sudo patronictl -c /etc/patroni/patroni.yml list      # topology: leader, replicas, lag
+sudo patronictl -c /etc/patroni/patroni.yml show-config
+sudo systemctl status percona-patroni
+sudo journalctl -u percona-patroni -f
+```
+
+The Patroni REST API (port `8008`) is what HAProxy and `99_verify.yml` use:
+
+```bash
+curl -s http://127.0.0.1:8008/cluster | jq      # members + roles + lag
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8008/primary   # 200 only on the leader
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8008/replica   # 200 only on a replica
+```
+
+Re-running `20_patroni.yml` is safe: config changes **reload** (SIGHUP) without a
+restart, and a healthy cluster is not disturbed.
+
+---
+
+## Inspecting HAProxy directly
+
+When the optional HAProxy tier is deployed, each `haproxy` node exposes a stats UI:
+
+```bash
+# Stats UI in a browser:  http://<haproxy-ip>:7000/
+curl -s 'http://127.0.0.1:7000/;csv' | column -s, -t | less   # backend up/down per pool
+sudo systemctl status haproxy
+```
+
+Apps connect through HAProxy, not directly to PostgreSQL:
+
+```bash
+psql "host=<haproxy-ip> port=5000 ..."   # read-write — always lands on the leader
+psql "host=<haproxy-ip> port=5001 ..."   # read-only  — load-balanced across replicas
+```
+
+On failover, HAProxy follows automatically: the new leader starts answering `200` on
+`/primary`, the demoted node drops out of the `primary` pool. Re-run
+`25_haproxy.yml` after changing the backend list; the config is `haproxy -c`-validated
+and reloaded gracefully.
 
 ---
 

@@ -54,7 +54,25 @@ all:
         node1: {}   # same hosts referenced again; vars merge from database_hosts
         node2: {}
         node3: {}
+    haproxy:          # only when Terraform haproxy_hosts is set (empty group otherwise)
+      hosts:
+        ha1: {}
+        ha2: {}
+    backup_server:    # only when Terraform backup_hosts is set (empty group otherwise)
+      hosts:
+        bkp1: {}
 ```
+
+> **Hostvars live once**, at `all.hosts.<name>`; the group entries above just
+> reference names with `{}` and let Ansible merge the vars. (Shown nested here for
+> readability.)
+
+The `haproxy` and `backup_server` groups come from the Terraform `haproxy_hosts` /
+`backup_hosts` name-lists — machines added to `vms` and tagged into those tiers (the
+same pattern as `database_hosts`/`etcd_hosts`). They carry the full `data_disk_*` /
+`private_ip` / `zone` / `instance_type` vars like any provisioned node, and are
+children of `all_vms`. The `haproxy` role targets `haproxy`; the `pgbackrest` role
+will use `backup_server` for the repo host.
 
 External etcd members (names in `etcd_hosts` that are not in `vms`, i.e. pre-existing
 infrastructure) appear with `ansible_host` set to the member name itself and **no**

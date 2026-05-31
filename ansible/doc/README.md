@@ -5,16 +5,19 @@ provisioned by Terraform and installs a production-style PostgreSQL HA stack on 
 **Percona PPG (Percona PostgreSQL) + Patroni + etcd**, with optional pgBackRest
 backups, HAProxy routing, and Percona Monitoring and Management (PMM).
 
-> **Status (2026-05-31):** the OS-prep (`common`), `storage`, `pg_repos`, and `etcd`
-> roles are implemented. A 3-node **etcd** cluster deploys and verifies green with
-> etcd installed from the **Percona PPG** repository by default. The `storage` role
-> formats and mounts the data disk on every database node (idempotent; skips
-> etcd-only nodes automatically). The PostgreSQL / Patroni / backups / monitoring
-> roles are still stubs. See **[What works today](#what-works-today)** for the exact state.
+> **Status (2026-05-31):** the full PostgreSQL HA stack is implemented — `common`,
+> `storage`, `pg_repos`, `etcd`, `postgresql`, `patroni`, and `haproxy`. A 3-node
+> cluster bootstraps PostgreSQL + Patroni (leader-first, automatic failover) on top
+> of etcd, with optional **HAProxy** routing in front (read-write `:5000`, read-only
+> `:5001`). All packages install from the **Percona PPG** repository by default. The
+> **pgBackRest** and **PMM** roles are still stubs. See **[What works today](#what-works-today)**
+> for the exact state.
 >
-> Tested live on **Ubuntu 24.04** and **Rocky Linux** (the GCP fleet was rebuilt
-> on Rocky on 2026-05-28 and the full pipeline ran green first-try, including a
-> `changed=0` idempotency re-run).
+> Tested live end-to-end on a **6-node Azure Rocky 9** fleet (3 database/etcd + 2
+> HAProxy + 1 backup server): the whole `site.yml` ran green, Patroni elected a
+> leader with two streaming replicas, write/read routing through HAProxy was
+> confirmed, and a re-run reported `changed=0`. Also verified earlier on Ubuntu and
+> a Rocky GCP fleet.
 
 ---
 
@@ -44,13 +47,14 @@ See **[handoff.md](handoff.md)** for the full contract.
 | OS prep | `00_prepare.yml` (`common`) | **Implemented** — packages, timezone, locale, chrony/NTP, sysctl, ulimits. Debian/Ubuntu + RHEL/Rocky. |
 | Storage | `00_prepare.yml` (`storage`) | **Implemented** — formats the data disk and mounts it at `/var/lib/postgresql`. Skips etcd-only nodes. |
 | etcd | `10_etcd.yml` | **Implemented** — 3-node cluster, Percona repo by default (or upstream binary). |
-| PostgreSQL + Patroni | `20_patroni.yml` | **Stub** |
+| PostgreSQL + Patroni | `20_patroni.yml` | **Implemented** — installs PG (`postgresql` role: install + prepare; Patroni owns config), bootstraps the cluster leader-first via `patroni`. |
+| HAProxy | `25_haproxy.yml` | **Implemented** (optional) — read-write `:5000` / read-only `:5001` routing driven by Patroni's REST health checks. Gated by `haproxy_enabled`; targets the `haproxy` group. |
 | Backups | `30_backups.yml` | **Stub** |
 | Monitoring | `40_monitoring.yml` | **Stub** |
-| Verify | `99_verify.yml` | **Implemented for etcd** (member count + cluster health). Patroni/PG checks planned. |
+| Verify | `99_verify.yml` | **Implemented** — connectivity, storage mount, PG binary, etcd (members + health), Patroni (one leader + member count), and HAProxy routing (when `haproxy_enabled`). |
 
-`site.yml` runs the whole pipeline; today that means OS prep + a working etcd cluster
-(the later phases are no-op stubs). The tested path is the three phases below.
+`site.yml` runs the whole pipeline: OS prep → etcd → PostgreSQL/Patroni → HAProxy
+(optional) → backups/monitoring (stubs) → verify.
 
 ---
 
@@ -78,22 +82,28 @@ ssh-add ~/.ssh/id_rsa
 ## Verify the Ansible connectivity to the hosts
 ansible -i inventory/gcp/hosts.yml all -m ping
 
-# 3. OS prep, then bootstrap the etcd cluster
+# 3. OS prep → etcd → PostgreSQL + Patroni
 ansible-playbook -i inventory/gcp playbooks/00_prepare.yml
 ansible-playbook -i inventory/gcp playbooks/10_etcd.yml
+ansible-playbook -i inventory/gcp playbooks/20_patroni.yml
 
-# 4. Verify the etcd cluster (3 members present, all healthy)
+# 3b. (optional) HAProxy routing — only if you provisioned haproxy nodes
+ansible-playbook -i inventory/gcp playbooks/25_haproxy.yml -e haproxy_enabled=true
+
+# 4. Verify (etcd + Patroni; HAProxy too when haproxy_enabled)
 ansible-playbook -i inventory/gcp playbooks/99_verify.yml
 ```
 
-`site.yml` runs the full (partly stubbed) pipeline in one shot:
+`site.yml` runs the full pipeline in one shot (add `-e haproxy_enabled=true` to
+include HAProxy):
 
 ```bash
-ansible-playbook -i inventory/gcp playbooks/site.yml    # or aws, azure
+ansible-playbook -i inventory/gcp playbooks/site.yml -e haproxy_enabled=true   # or aws, azure
 ```
 
-Re-running any of these is safe — the roles are idempotent (a second `10_etcd.yml`
-run reports `changed=0` and does **not** restart a healthy cluster).
+Re-running any of these is safe — the roles are idempotent (a second run reports
+`changed=0` and does **not** restart a healthy cluster; Patroni config changes
+reload via SIGHUP rather than restart).
 
 ---
 
@@ -297,8 +307,8 @@ postgres_version: 17          # PPG ships 16 and 17
 
 `pg_repos` reads this and runs `percona-release setup -y ppg-<postgres_version>`,
 which enables the matching Percona PPG repo on the host. Every consumer role
-(`etcd` today; `postgresql`, `patroni`, `pgbackrest`, `pmm_client` when they
-land) defaults to installing from this same repo.
+(`etcd`, `postgresql`, `patroni` today; `pgbackrest`, `pmm_client` when they land)
+defaults to installing from this same repo.
 
 **Per-role override.** Each consumer role exposes a `<role>_percona_repo`
 variable defaulting to `pg_percona_repo` (i.e. `ppg-<postgres_version>`). Set it
@@ -347,6 +357,52 @@ overridable):
 | `etcd_scheme` | `http` | set `https` once you wire up certs |
 | `etcd_version` | `3.5.30` | binary method only |
 
+### PostgreSQL + Patroni
+
+`20_patroni.yml` runs two roles on `database_hosts`:
+
+- **`postgresql`** — installs the PPG PostgreSQL packages and *prepares* the host:
+  it masks the packaged `postgresql` systemd unit, drops Debian's auto-created
+  cluster, and creates an empty `data_dir` on the mounted disk. It does **not**
+  `initdb`, write `postgresql.conf`, or start a server — Patroni owns all of that.
+- **`patroni`** — installs `percona-patroni`, renders `/etc/patroni/patroni.yml`
+  (etcd3 DCS pointed at every `etcd_cluster` member; bootstrap `initdb`/`pg_hba`
+  with `scram-sha-256`), and brings the cluster up **leader-first**: it starts
+  `database_hosts[0]`, waits on the Patroni REST `/primary` endpoint until it is the
+  running primary, then starts the rest as replicas. Config changes **reload**
+  (SIGHUP), not restart.
+
+**Credentials.** The superuser and replication passwords are generated once and
+persisted under `inventory/<cloud>/.patroni_*.pass` (gitignored) so re-runs reuse
+them. Override with `patroni_superuser_password` / `patroni_replication_password`.
+
+Useful Patroni knobs (role defaults, override per-cloud):
+
+| Variable | Default | Notes |
+|---|---|---|
+| `patroni_restapi_port` | `8008` | Patroni REST API / health-check port |
+| `patroni_watchdog_mode` | `off` | cloud VMs rarely expose `/dev/watchdog`; set `automatic`/`required` where one exists |
+| `patroni_postgresql_parameters` | replication-tuned map | `archive_mode` stays `off` until the pgbackrest role lands |
+| `patroni_pg_hba` | scram-sha-256 rules | client + replication access |
+
+### Connection routing (HAProxy)
+
+`25_haproxy.yml` (optional) configures HAProxy on the `haproxy` group as a TCP
+load balancer in front of the cluster, using Patroni's REST API to find the leader
+and replicas — so failover is followed automatically with no reconfiguration:
+
+| Port | Pool | Health check | Routes to |
+|---|---|---|---|
+| `5000` | `primary` | `OPTIONS /primary` → 200 | the current **leader** (read-write) |
+| `5001` | `standbys` | `OPTIONS /replica` → 200 | streaming **replicas** (read-only) |
+| `7000` | `stats` | — | HAProxy stats UI |
+
+Gated by `haproxy_enabled` (default `false`) — set it (or pass `-e haproxy_enabled=true`)
+once you've provisioned HAProxy nodes (Terraform `haproxy_hosts`). Installs the distro
+`haproxy` by default; set `haproxy_use_percona_repo: true` + `haproxy_package: percona-haproxy`
+for Percona's build. On RHEL/Rocky the role sets the `haproxy_connect_any` SELinux
+boolean so HAProxy can bind the custom ports and dial the backends.
+
 ### Switching PostgreSQL distributions
 
 By default the framework targets **Percona PPG**. Community **PGDG** is the
@@ -378,13 +434,14 @@ verified end-to-end.
 | OS prep | packages, timezone, locale, chrony/NTP, sysctl, ulimits | **Done** |
 | Storage | mkfs + mount of the data disk at `/var/lib/postgresql` | **Done** |
 | etcd | 3-node etcd cluster on the `etcd_cluster` group (Percona repo by default) | **Done** |
-| PostgreSQL | PPG (or PGDG) packages, base config, `data_directory` under the mounted disk | Planned |
-| Patroni | DCS-backed automatic failover, REST API on each node, systemd unit | Planned |
+| PostgreSQL | PPG packages installed + host prepared; `data_directory` under the mounted disk (Patroni initializes it) | **Done** |
+| Patroni | DCS-backed automatic failover, REST API on each node, leader-first bootstrap, systemd unit | **Done** |
+| Routing *(optional)* | HAProxy with R/W (`:5000`) and R/O (`:5001`) endpoints driven by Patroni's REST API | **Done** |
 | Backups *(optional)* | pgBackRest, full + diff schedule, repo on cloud object storage | Planned |
-| Routing *(optional)* | HAProxy with R/W and R/O endpoints driven by Patroni's REST API | Planned |
 | Monitoring *(optional)* | PMM client registered against your PMM server | Planned |
 
-Optional components are enabled via group vars (e.g. `pgbackrest_enabled: true`).
+Optional components are enabled via group vars / `-e` (e.g. `haproxy_enabled: true`,
+`pgbackrest_enabled: true`).
 
 ---
 

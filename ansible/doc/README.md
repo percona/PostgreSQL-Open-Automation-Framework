@@ -5,14 +5,12 @@ provisioned by Terraform and installs a production-style PostgreSQL HA stack on 
 **Percona PPG (Percona PostgreSQL) + Patroni + etcd**, with optional pgBackRest
 backups, HAProxy routing, and Percona Monitoring and Management (PMM).
 
-> **Status (2026-05-28):** the OS-prep (`common`), `pg_repos`, and `etcd` roles are
-> implemented. A 3-node **etcd** cluster — the distributed store Patroni uses —
-> deploys and verifies green, with etcd installed from the **Percona PPG**
-> repository by default (selected by the cluster-wide `postgres_version`).
-> `pg_repos` is the single owner of `percona-release` + `ppg-<version>` setup; every
-> other role installs from the same source via a `<role>_percona_repo` override
-> hook. The PostgreSQL / Patroni / backups / monitoring roles are still stubs. See
-> **[What works today](#what-works-today)** for the exact state.
+> **Status (2026-05-31):** the OS-prep (`common`), `storage`, `pg_repos`, and `etcd`
+> roles are implemented. A 3-node **etcd** cluster deploys and verifies green with
+> etcd installed from the **Percona PPG** repository by default. The `storage` role
+> formats and mounts the data disk on every database node (idempotent; skips
+> etcd-only nodes automatically). The PostgreSQL / Patroni / backups / monitoring
+> roles are still stubs. See **[What works today](#what-works-today)** for the exact state.
 >
 > Tested live on **Ubuntu 24.04** and **Rocky Linux** (the GCP fleet was rebuilt
 > on Rocky on 2026-05-28 and the full pipeline ran green first-try, including a
@@ -44,7 +42,7 @@ See **[handoff.md](handoff.md)** for the full contract.
 | Phase | Playbook | Status |
 |---|---|---|
 | OS prep | `00_prepare.yml` (`common`) | **Implemented** — packages, timezone, locale, chrony/NTP, sysctl, ulimits. Debian/Ubuntu + RHEL/Rocky. |
-| Storage | `00_prepare.yml` (`storage`) | **Stub** — defaults are in place; the mkfs/mount tasks are not written yet. |
+| Storage | `00_prepare.yml` (`storage`) | **Implemented** — formats the data disk and mounts it at `/var/lib/postgresql`. Skips etcd-only nodes. |
 | etcd | `10_etcd.yml` | **Implemented** — 3-node cluster, Percona repo by default (or upstream binary). |
 | PostgreSQL + Patroni | `20_patroni.yml` | **Stub** |
 | Backups | `30_backups.yml` | **Stub** |
@@ -254,6 +252,37 @@ The framework loads variables from three places, lowest precedence first:
 > value per-cloud it must come from a **role default** (which inventory group_vars beat),
 > not from `playbooks/group_vars/`.
 
+### Storage (data disk)
+
+The `storage` role runs as part of `00_prepare.yml` on every host in `database_hosts`.
+It formats the attached data disk and mounts it — this is where PostgreSQL's
+`data_directory` will live once the `postgresql` role lands.
+
+**What it does:**
+
+1. Skips the host entirely if `data_disk_device` is absent — etcd-only nodes that carry
+   no data disk are left untouched.
+2. Creates a filesystem on `data_disk_device` (default: `ext4`).
+3. Creates the mount point directory if it does not exist.
+4. Mounts the disk and writes a persistent `fstab` entry (mount options: `defaults,noatime`).
+
+The role is **idempotent**: re-running `00_prepare.yml` on a host with a formatted,
+mounted disk reports `changed=0` and does not reformat or remount.
+
+**Variables** (role defaults, override per-cloud in `inventory/<cloud>/group_vars/all/cloud.yml`):
+
+| Variable | Default | Notes |
+|---|---|---|
+| `postgres_mount_point` | `/var/lib/postgresql` | Mount path. PostgreSQL's `data_directory` will live under a version-specific subdirectory here once the `postgresql` role lands. |
+| `postgres_data_disk_fs` | `ext4` | Filesystem type. `xfs` is also a good choice for high-WAL-volume workloads. |
+
+**Per-host inputs** (set in the inventory, not as group vars):
+
+| Variable | Notes |
+|---|---|
+| `data_disk_device` | Stable device path for the data disk — e.g. `/dev/disk/by-id/google-node1-data` (GCP), `/dev/disk/by-id/nvme-...` (AWS), `/dev/sdb` (bare-metal). Use a stable path, not `sdX`, which can shift on reboot. Omit on etcd-only nodes. |
+| `data_disk_size_gb` | Informational only (not used by the role today; carried in inventory for future capacity checks). |
+
 ### Choosing the PostgreSQL version (and the repository it pulls from)
 
 The `postgres_version` variable in `playbooks/group_vars/all.yml` is the single
@@ -333,8 +362,9 @@ implemented and the role will fail loudly if `pg_distribution: pgdg` is set.
 
 The implemented roles support **Debian/Ubuntu** and **RHEL/Rocky** (the `common` role
 branches on `ansible_os_family` for package names, the chrony service name, and locale
-handling; the `etcd` package method uses apt or yum/dnf accordingly). Only the
-Debian/Ubuntu path is currently tested on live hosts.
+handling; the `etcd` package method uses apt or yum/dnf accordingly). Both paths have
+been tested live — the GCP fleet runs Rocky Linux and Ubuntu 24.04 has also been
+verified end-to-end.
 
 ---
 
@@ -343,7 +373,7 @@ Debian/Ubuntu path is currently tested on live hosts.
 | Tier | Components | State |
 |---|---|---|
 | OS prep | packages, timezone, locale, chrony/NTP, sysctl, ulimits | **Done** |
-| Storage | mkfs + mount of the data disk at `/var/lib/postgresql` | Planned (defaults only) |
+| Storage | mkfs + mount of the data disk at `/var/lib/postgresql` | **Done** |
 | etcd | 3-node etcd cluster on the `etcd_cluster` group (Percona repo by default) | **Done** |
 | PostgreSQL | PPG (or PGDG) packages, base config, `data_directory` under the mounted disk | Planned |
 | Patroni | DCS-backed automatic failover, REST API on each node, systemd unit | Planned |

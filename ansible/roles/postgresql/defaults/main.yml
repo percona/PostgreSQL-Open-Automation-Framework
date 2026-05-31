@@ -1,8 +1,56 @@
 ---
-# postgresql role defaults. Override per-cloud in inventory/<cloud>/group_vars/.
+# postgresql role defaults. Override per-cloud in inventory/<cloud>/group_vars/
+# (inventory group_vars beat role defaults).
+#
+# This role INSTALLS and PREPARES PostgreSQL only; it does NOT initialize a data
+# directory, write postgresql.conf/pg_hba.conf, or start a server. In this framework
+# PostgreSQL is managed by Patroni (see roles/patroni): Patroni runs initdb, renders
+# postgresql.conf from its own config, and owns start/stop. So this role just lays
+# the packages down, makes sure nothing else competes for the server (the packaged
+# systemd unit is masked, the Debian auto-cluster is dropped), and creates an empty,
+# correctly-owned data directory on the mounted disk for Patroni to initialize.
 
 # Per-role override hook for the PPG repo PostgreSQL installs from. Defaults to the
 # cluster-wide pg_percona_repo (ppg-<postgres_version>) set by pg_repos. Override
 # to pin PostgreSQL to a different ppg-<N> than the rest of the stack — rarely
 # useful, since postgres_version drives the default already.
 postgresql_percona_repo: "{{ pg_percona_repo }}"
+
+# OS account that owns the data directory and runs the server. Created by the
+# server package during install (postgresql-common on Debian, the
+# percona-postgresql<ver>-server RPM on RHEL).
+postgres_user: postgres
+postgres_group: postgres
+
+# Packages to install, per OS family. Percona PPG package names differ between
+# families: Debian uses `percona-postgresql-<ver>`, RHEL uses
+# `percona-postgresql<ver>-server` (no dash before the version).
+postgresql_packages_map:
+  Debian:
+    - "percona-postgresql-{{ postgres_version }}"
+    - "percona-postgresql-client-{{ postgres_version }}"
+    - percona-postgresql-contrib
+  RedHat:
+    - "percona-postgresql{{ postgres_version }}"
+    - "percona-postgresql{{ postgres_version }}-server"
+    - "percona-postgresql{{ postgres_version }}-contrib"
+postgresql_packages: "{{ postgresql_packages_map[ansible_os_family] }}"
+
+# The packaged systemd unit we mask so Patroni stays the sole manager of PostgreSQL.
+# Debian ships a single `postgresql` wrapper service; RHEL ships `postgresql-<ver>`.
+postgresql_service_map:
+  Debian: postgresql
+  RedHat: "postgresql-{{ postgres_version }}"
+postgresql_service: "{{ postgresql_service_map[ansible_os_family] }}"
+
+# Directory holding the PostgreSQL binaries (postgres, pg_ctl, initdb, psql). Patroni
+# needs this as its `postgresql.bin_dir`. Paths are version- and family-specific.
+postgres_bin_dir_map:
+  Debian: "/usr/lib/postgresql/{{ postgres_version }}/bin"
+  RedHat: "/usr/pgsql-{{ postgres_version }}/bin"
+postgres_bin_dir: "{{ postgres_bin_dir_map[ansible_os_family] }}"
+
+# Debian's postgresql-common auto-creates (and tries to start) a cluster named "main"
+# at install time. We don't use it — Patroni initializes its own at postgres_data_dir.
+# This is the path of that throwaway cluster, removed during prepare.
+postgresql_debian_autocluster_dir: "/var/lib/postgresql/{{ postgres_version }}/main"

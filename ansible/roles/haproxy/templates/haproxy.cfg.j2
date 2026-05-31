@@ -1,0 +1,39 @@
+{{ ansible_managed | comment }}
+# HAProxy for the POAF Patroni cluster — rendered by roles/haproxy.
+# TCP proxy; backends are health-checked against Patroni's REST API (port
+# {{ haproxy_check_port }}): /primary is 200 only on the leader, /replica only on streaming replicas.
+global
+    maxconn {{ haproxy_maxconn }}
+
+defaults
+    log     global
+    mode    tcp
+    retries 2
+    timeout client {{ haproxy_timeout_client }}
+    timeout connect {{ haproxy_timeout_connect }}
+    timeout server {{ haproxy_timeout_server }}
+    timeout check {{ haproxy_timeout_check }}
+
+listen stats
+    mode http
+    bind *:{{ haproxy_stats_port }}
+    stats enable
+    stats uri {{ haproxy_stats_uri }}
+
+listen primary
+    bind *:{{ haproxy_primary_port }}
+    option httpchk OPTIONS /primary
+    http-check expect status 200
+    default-server inter {{ haproxy_check_inter }} fall {{ haproxy_check_fall }} rise {{ haproxy_check_rise }} on-marked-down shutdown-sessions
+{% for h in groups[haproxy_backend_group] | default([]) %}
+    server {{ h }} {{ hostvars[h].private_ip | default(hostvars[h].ansible_host) }}:{{ haproxy_pg_port }} maxconn {{ haproxy_maxconn }} check port {{ haproxy_check_port }}
+{% endfor %}
+
+listen standbys
+    bind *:{{ haproxy_replica_port }}
+    option httpchk OPTIONS /replica
+    http-check expect status 200
+    default-server inter {{ haproxy_check_inter }} fall {{ haproxy_check_fall }} rise {{ haproxy_check_rise }} on-marked-down shutdown-sessions
+{% for h in groups[haproxy_backend_group] | default([]) %}
+    server {{ h }} {{ hostvars[h].private_ip | default(hostvars[h].ansible_host) }}:{{ haproxy_pg_port }} maxconn {{ haproxy_maxconn }} check port {{ haproxy_check_port }}
+{% endfor %}

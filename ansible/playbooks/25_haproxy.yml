@@ -1,0 +1,13 @@
+---
+# 25_haproxy — optional HAProxy connection routing in front of the Patroni cluster.
+# Targets the `haproxy` inventory group (provisioned via Terraform haproxy_hosts).
+# Skipped entirely when haproxy_enabled is false, and a no-op when the group is empty.
+
+- name: Configure HAProxy routing to the Patroni cluster
+  hosts: haproxy
+  become: true
+  vars_files:
+    - "{{ inventory_dir }}/credentials.json"
+  roles:
+    - role: haproxy
+      when: haproxy_enabled | bool

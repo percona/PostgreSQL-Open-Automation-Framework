@@ -1,0 +1,47 @@
+---
+# haproxy role defaults. Override per-cloud in inventory/<cloud>/group_vars/.
+#
+# TCP load balancer that routes app traffic to the Patroni-managed PostgreSQL
+# cluster, using Patroni's REST health endpoints to find the current leader
+# (/primary) and the streaming replicas (/replica). Layout matches the standard
+# Patroni haproxy.cfg: stats on 7000, read-write on 5000, read-only on 5001.
+
+# --- package source ---------------------------------------------------------------
+# Default to the distribution `haproxy` package (in Rocky AppStream / Debian main —
+# reliable, standard, and the config is identical). Set haproxy_use_percona_repo: true
+# and haproxy_package: percona-haproxy to install Percona's build from the PPG repo.
+haproxy_package: haproxy
+haproxy_use_percona_repo: false
+haproxy_percona_repo: "{{ pg_percona_repo | default('ppg-' ~ (postgres_version | default(17))) }}"
+
+haproxy_service: haproxy
+haproxy_config_path: /etc/haproxy/haproxy.cfg
+# `haproxy -c -f <file>` config check, run before the file is written (template validate).
+haproxy_validate_cmd: "/usr/sbin/haproxy -c -f %s"
+
+# --- listener ports (standard Patroni HAProxy layout) -----------------------------
+haproxy_stats_port: 7000     # HTTP stats UI (and ;csv for healthchecks)
+haproxy_primary_port: 5000   # read-write: forwards to the Patroni leader
+haproxy_replica_port: 5001   # read-only: forwards to streaming replicas
+haproxy_stats_uri: /
+
+# --- backend wiring ---------------------------------------------------------------
+# Inventory group holding the PG/Patroni nodes HAProxy forwards to.
+haproxy_backend_group: database_hosts
+# PostgreSQL listener on the backends; Patroni REST port used for health checks.
+# (Resolved with default() because the haproxy hosts don't carry these group_vars.)
+haproxy_pg_port: "{{ postgres_port | default(5432) }}"
+haproxy_check_port: "{{ patroni_restapi_port | default(8008) }}"
+haproxy_maxconn: 100
+
+# Health-check tuning (matches the reference cfg): probe every 3s, mark down after 3
+# consecutive failures, back up after 2 successes, drop sessions on a node marked down.
+haproxy_check_inter: 3s
+haproxy_check_fall: 3
+haproxy_check_rise: 2
+
+# Global/defaults timeouts (long client/server for steady DB sessions).
+haproxy_timeout_client: 30m
+haproxy_timeout_server: 30m
+haproxy_timeout_connect: 4s
+haproxy_timeout_check: 5s

@@ -1,9 +1,61 @@
 ---
-# haproxy — optional R/W + R/O routing for app traffic. Backends are driven by
-# Patroni's REST API (leader/replica checks). Gated by haproxy_enabled (default false).
-# TODO: implement.
+# haproxy — install HAProxy and render the standard Patroni routing config:
+#   :{{ haproxy_primary_port }} → current leader (read-write)
+#   :{{ haproxy_replica_port }} → streaming replicas (read-only)
+#   :{{ haproxy_stats_port }} → stats UI
+# Backends + health checks are driven by Patroni's REST API, so failover is followed
+# automatically without reconfiguring HAProxy.
 
-- name: "[haproxy] scaffold — not yet implemented"
-  ansible.builtin.debug:
-    msg: "Placeholder for HAProxy install on {{ inventory_hostname }}."
-  when: haproxy_enabled | bool
+- name: "[haproxy] assert a supported OS family"
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family in ['Debian', 'RedHat']
+    fail_msg: >-
+      haproxy role supports Debian/Ubuntu and RHEL/Rocky only
+      (got ansible_os_family={{ ansible_os_family }}).
+
+# Optional: install Percona's HAProxy build from the PPG repo instead of the distro one.
+- name: "[haproxy] configure Percona PPG repository"
+  ansible.builtin.include_role:
+    name: pg_repos
+  vars:
+    pg_repos_repo: "{{ haproxy_percona_repo }}"
+  when: haproxy_use_percona_repo | bool
+
+- name: "[haproxy] install HAProxy"
+  ansible.builtin.package:
+    name: "{{ haproxy_package }}"
+    state: present
+
+# SELinux: HAProxy runs confined (haproxy_t). The haproxy_connect_any boolean lets it
+# bind the custom frontends (5000/5001/7000) and dial the backends (PG + Patroni REST)
+# on non-standard ports — the standard fix on RHEL/Rocky. No-op when SELinux is off.
+- name: "[haproxy] allow HAProxy to use any port (SELinux)"
+  ansible.posix.seboolean:
+    name: haproxy_connect_any
+    state: true
+    persistent: true
+  when:
+    - ansible_os_family == 'RedHat'
+    - ansible_selinux.status | default('disabled') == 'enabled'
+
+- name: "[haproxy] render haproxy.cfg"
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: "{{ haproxy_config_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "{{ haproxy_validate_cmd }}"
+  notify: Reload haproxy
+
+- name: "[haproxy] enable and start HAProxy"
+  ansible.builtin.systemd:
+    name: "{{ haproxy_service }}"
+    state: started
+    enabled: true
+
+# Apply any pending config reload before the play ends so the running proxy reflects
+# the rendered backend list.
+- name: "[haproxy] apply pending reloads"
+  ansible.builtin.meta: flush_handlers

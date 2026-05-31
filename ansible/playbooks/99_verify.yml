@@ -109,3 +109,35 @@
           {{ members | map(attribute='name')
              | zip(members | map(attribute='role'), members | map(attribute='state'))
              | list }}
+
+- name: HAProxy routing check
+  hosts: haproxy
+  gather_facts: false
+  tasks:
+    # Only meaningful once HAProxy is configured; skip otherwise so a baseline cluster
+    # (haproxy group present but role not run) doesn't report a false failure.
+    - name: Verify HAProxy is routing to the Patroni cluster
+      when: haproxy_enabled | default(false) | bool
+      block:
+        - name: Fetch HAProxy stats (CSV)
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ haproxy_stats_port | default(7000) }}/;csv"
+            return_content: true
+          register: haproxy_stats
+          changed_when: false
+
+        - name: Assert the read-write (primary) and read-only (standbys) pools each have an UP backend
+          vars:
+            lines: "{{ haproxy_stats.content.splitlines() }}"
+            primary_up: "{{ lines | select('match', '^primary,') | select('search', ',UP,') | list | length }}"
+            standby_up: "{{ lines | select('match', '^standbys,') | select('search', ',UP,') | list | length }}"
+          ansible.builtin.assert:
+            that:
+              - primary_up | int >= 1
+              - standby_up | int >= 1
+            fail_msg: >-
+              HAProxy has no UP backend in a pool (primary UP={{ primary_up }}, standbys UP={{ standby_up }}).
+              Patroni REST health checks may be failing.
+            success_msg: >-
+              HAProxy routing OK on {{ inventory_hostname }}: primary pool UP rows={{ primary_up }},
+              standbys pool UP rows={{ standby_up }}.

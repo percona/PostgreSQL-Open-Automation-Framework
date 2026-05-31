@@ -1,0 +1,7 @@
+---
+# Reload (not restart) on config change: HAProxy reloads gracefully, draining old
+# sessions, so a backend-list change doesn't drop live connections.
+- name: Reload haproxy
+  ansible.builtin.systemd:
+    name: "{{ haproxy_service }}"
+    state: reloaded

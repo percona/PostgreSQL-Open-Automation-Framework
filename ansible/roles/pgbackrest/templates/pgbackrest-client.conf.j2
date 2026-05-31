@@ -1,0 +1,15 @@
+{{ ansible_managed | comment }}
+# pgBackRest agent config for {{ inventory_hostname }} (a database node) — rendered by
+# roles/pgbackrest. archive-push (invoked by PostgreSQL's archive_command) and remote
+# backup/restore traffic go to the repository host over SSH.
+[global]
+repo1-host={{ pgbackrest_repo_host_ip }}
+repo1-host-user={{ postgres_user }}
+process-max={{ pgbackrest_process_max }}
+log-level-console=info
+log-level-file=info
+log-path={{ pgbackrest_log_dir }}
+
+[{{ pgbackrest_stanza }}]
+pg1-path={{ pgbackrest_pg_path }}
+pg1-port={{ pgbackrest_pg_port }}

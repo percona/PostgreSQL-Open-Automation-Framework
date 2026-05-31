@@ -10,3 +10,6 @@ inventory/*/credentials.json
 # Cluster secrets generated + persisted by the patroni role (per-cloud, reused across
 # runs so replication/superuser passwords stay stable). Never commit these.
 inventory/*/.patroni_*.pass
+
+# pgBackRest SSH mesh keypair generated + persisted by the pgbackrest role. Never commit.
+inventory/*/.pgbackrest_id_*

@@ -1,0 +1,10 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Schedule pgBackRest {{ item.type }} backup of stanza {{ pgbackrest_stanza }}
+
+[Timer]
+OnCalendar={{ item.oncalendar }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

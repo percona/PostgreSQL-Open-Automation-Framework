@@ -1,9 +1,309 @@
 ---
-# pgbackrest — install pgBackRest, configure stanza, schedule full/diff backups.
-# Gated by pgbackrest_enabled (default false). Repo location is operator-supplied.
-# TODO: implement.
+# pgbackrest — dedicated-repository-host backups for the Patroni cluster, over SSH.
+# Runs on the union of the database tier and the backup-server tier (the play targets
+# both groups). Tasks branch by group membership; the cross-host steps (archive enable,
+# stanza-create, initial backup) are run_once and delegated to the right host.
+#
+# Mirrors Percona's pgBackRest dedicated-repo + Patroni guidance:
+#   https://docs.percona.com/postgresql/17/solutions/pgbackrest/
+#   https://docs.percona.com/postgresql/17/solutions/dr-pgbackrest-setup/
 
-- name: "[pgbackrest] scaffold — not yet implemented"
-  ansible.builtin.debug:
-    msg: "Placeholder for pgBackRest setup on {{ inventory_hostname }}."
-  when: pgbackrest_enabled | bool
+- name: "[pgbackrest] assert a supported OS family"
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family in ['Debian', 'RedHat']
+    fail_msg: "pgbackrest role supports Debian/Ubuntu and RHEL/Rocky only."
+
+- name: "[pgbackrest] require a dedicated backup server"
+  ansible.builtin.assert:
+    that:
+      - groups[pgbackrest_repo_group] | default([]) | length > 0
+    fail_msg: >-
+      pgbackrest_enabled is set but the '{{ pgbackrest_repo_group }}' group is empty —
+      provision a backup host (Terraform backup_hosts) before enabling pgBackRest.
+  run_once: true
+
+# ── Phase 1: packages (all hosts) ────────────────────────────────────────────────
+- name: "[pgbackrest] configure Percona PPG repository"
+  ansible.builtin.include_role:
+    name: pg_repos
+  vars:
+    pg_repos_repo: "{{ pgbackrest_percona_repo }}"
+
+- name: "[pgbackrest] install pgBackRest"
+  ansible.builtin.package:
+    name: "{{ pgbackrest_packages }}"
+    state: present
+
+# ── Phase 2: postgres user on the repo host (DB nodes already have it) ────────────
+- name: "[pgbackrest] create postgres group on the repo host"
+  ansible.builtin.group:
+    name: "{{ postgres_group }}"
+    system: true
+  when: inventory_hostname in groups[pgbackrest_repo_group]
+
+- name: "[pgbackrest] create postgres user on the repo host"
+  ansible.builtin.user:
+    name: "{{ postgres_user }}"
+    group: "{{ postgres_group }}"
+    home: "{{ pgbackrest_repo_postgres_home }}"
+    create_home: true
+    system: true
+    shell: /bin/bash
+  when: inventory_hostname in groups[pgbackrest_repo_group]
+
+# ── Phase 3: resolve the postgres home dir on every host (for the SSH key path) ───
+- name: "[pgbackrest] look up the postgres account"
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ postgres_user }}"
+
+- name: "[pgbackrest] set per-host facts"
+  ansible.builtin.set_fact:
+    pgbackrest_home: "{{ ansible_facts.getent_passwd[postgres_user][4] }}"
+    pgbackrest_ssh_dir: "{{ ansible_facts.getent_passwd[postgres_user][4] }}/.ssh"
+
+- name: "[pgbackrest] ensure log directory exists"
+  ansible.builtin.file:
+    path: "{{ pgbackrest_log_dir }}"
+    state: directory
+    owner: "{{ postgres_user }}"
+    group: "{{ postgres_group }}"
+    mode: "0750"
+
+- name: "[pgbackrest] ensure config directory exists"
+  ansible.builtin.file:
+    path: "{{ pgbackrest_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# ── Phase 4: passwordless SSH mesh for the postgres user ──────────────────────────
+# One ed25519 keypair, generated once on the control node and installed on every host,
+# so any postgres@host can reach any other (repo host ↔ DB nodes, both directions).
+- name: "[pgbackrest] generate the shared SSH keypair (control node, once)"
+  run_once: true
+  delegate_to: localhost
+  become: false
+  ansible.builtin.command:
+    cmd: "ssh-keygen -t {{ pgbackrest_ssh_key_type }} -N '' -C poaf-pgbackrest -f {{ pgbackrest_ssh_secret_dir }}/.pgbackrest_id_{{ pgbackrest_ssh_key_type }}"
+    creates: "{{ pgbackrest_ssh_secret_dir }}/.pgbackrest_id_{{ pgbackrest_ssh_key_type }}"
+
+- name: "[pgbackrest] ensure the postgres ~/.ssh directory exists"
+  ansible.builtin.file:
+    path: "{{ pgbackrest_ssh_dir }}"
+    state: directory
+    owner: "{{ postgres_user }}"
+    group: "{{ postgres_group }}"
+    mode: "0700"
+
+- name: "[pgbackrest] install the private key for postgres"
+  # Use src (byte-exact file copy) — lookup('file') would strip the trailing newline
+  # an OpenSSH private key requires, breaking it with "error in libcrypto".
+  ansible.builtin.copy:
+    src: "{{ pgbackrest_ssh_secret_dir }}/.pgbackrest_id_{{ pgbackrest_ssh_key_type }}"
+    dest: "{{ pgbackrest_ssh_dir }}/id_{{ pgbackrest_ssh_key_type }}"
+    owner: "{{ postgres_user }}"
+    group: "{{ postgres_group }}"
+    mode: "0600"
+
+- name: "[pgbackrest] authorize the shared key for postgres"
+  ansible.posix.authorized_key:
+    user: "{{ postgres_user }}"
+    key: "{{ lookup('file', pgbackrest_ssh_secret_dir ~ '/.pgbackrest_id_' ~ pgbackrest_ssh_key_type ~ '.pub') }}"
+    state: present
+
+- name: "[pgbackrest] write an SSH client config for postgres (accept new host keys)"
+  ansible.builtin.copy:
+    content: |
+      # Managed by roles/pgbackrest — passwordless SSH for the backup mesh.
+      Host *
+          StrictHostKeyChecking accept-new
+          IdentityFile ~/.ssh/id_{{ pgbackrest_ssh_key_type }}
+    dest: "{{ pgbackrest_ssh_dir }}/config"
+    owner: "{{ postgres_user }}"
+    group: "{{ postgres_group }}"
+    mode: "0600"
+
+# ── Phase 5: configuration files ─────────────────────────────────────────────────
+- name: "[pgbackrest] create the repository directory (repo host, on the mounted disk)"
+  ansible.builtin.file:
+    path: "{{ pgbackrest_repo_path }}"
+    state: directory
+    owner: "{{ postgres_user }}"
+    group: "{{ postgres_group }}"
+    mode: "0750"
+  when: inventory_hostname in groups[pgbackrest_repo_group]
+
+- name: "[pgbackrest] render repo-host config"
+  ansible.builtin.template:
+    src: pgbackrest-repo.conf.j2
+    dest: "{{ pgbackrest_config_file }}"
+    owner: "{{ postgres_user }}"
+    group: "{{ postgres_group }}"
+    mode: "0640"
+  when: inventory_hostname in groups[pgbackrest_repo_group]
+
+- name: "[pgbackrest] render database-node (agent) config"
+  ansible.builtin.template:
+    src: pgbackrest-client.conf.j2
+    dest: "{{ pgbackrest_config_file }}"
+    owner: "{{ postgres_user }}"
+    group: "{{ postgres_group }}"
+    mode: "0640"
+  when: inventory_hostname in groups[pgbackrest_db_group]
+
+# ── Phase 6: stanza-create (repo host) — before archiving, so WAL has a target ────
+- name: "[pgbackrest] check whether the stanza already exists"
+  ansible.builtin.command: "pgbackrest --stanza={{ pgbackrest_stanza }} --output=json info"
+  become_user: "{{ postgres_user }}"
+  register: pgbackrest_info_pre
+  changed_when: false
+  failed_when: false
+  when: inventory_hostname in groups[pgbackrest_repo_group]
+
+- name: "[pgbackrest] create the stanza"
+  ansible.builtin.command: "pgbackrest --stanza={{ pgbackrest_stanza }} stanza-create"
+  become_user: "{{ postgres_user }}"
+  changed_when: true
+  when:
+    - inventory_hostname in groups[pgbackrest_repo_group]
+    - (pgbackrest_info_pre.stdout | default('[]') | from_json
+        | selectattr('name', 'equalto', pgbackrest_stanza)
+        | selectattr('status.code', 'equalto', 0) | list | length) == 0
+
+# ── Phase 7: enable WAL archiving in the DCS, then controlled rolling restart ─────
+# Idempotent: only edits + restarts when archive_mode/archive_command aren't already
+# the desired values. Driven once from the first DB host via patronictl/REST.
+- name: "[pgbackrest] enable archiving + rolling restart"
+  run_once: true
+  delegate_to: "{{ groups[pgbackrest_db_group][0] }}"
+  block:
+    - name: "[pgbackrest] read the current Patroni dynamic config"
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ pgbackrest_patroni_restapi_port }}/config"
+        return_content: true
+      register: pgbackrest_dcs
+      changed_when: false
+
+    - name: "[pgbackrest] decide whether archiving needs to change"
+      # Gate on archive_mode only — flipping it is what needs the restart. Once on, we
+      # leave it (comparing the exact archive_command string is fragile across Patroni
+      # normalisation and would trigger needless restarts on every re-run).
+      # NB: `patronictl edit-config -s ...=on` YAML-coerces "on" to boolean true, so the
+      # DCS stores archive_mode as JSON `true`. Coerce to a lowercased string before the
+      # membership test so true/on/always all count as "already enabled".
+      ansible.builtin.set_fact:
+        pgbackrest_archive_change: >-
+          {{ (pgbackrest_dcs.json.postgresql.parameters.archive_mode | default('off')) | string | lower
+             not in ['on', 'always', 'true'] }}
+
+    - name: "[pgbackrest] set archive_mode + archive_command in the DCS"
+      ansible.builtin.command:
+        argv:
+          - patronictl
+          - -c
+          - "{{ pgbackrest_patroni_config }}"
+          - edit-config
+          - "{{ cluster_name }}"
+          - --force
+          - -s
+          - postgresql.parameters.archive_mode=on
+          - -s
+          - "postgresql.parameters.archive_command={{ pgbackrest_archive_command }}"
+          - -s
+          - "postgresql.parameters.archive_timeout={{ pgbackrest_archive_timeout }}"
+      changed_when: true
+      when: pgbackrest_archive_change | bool
+
+    - name: "[pgbackrest] read cluster membership for the rolling restart"
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ pgbackrest_patroni_restapi_port }}/cluster"
+        return_content: true
+      register: pgbackrest_cluster
+      changed_when: false
+      when: pgbackrest_archive_change | bool
+
+    - name: "[pgbackrest] derive leader and replicas"
+      ansible.builtin.set_fact:
+        pgbackrest_leader: "{{ pgbackrest_cluster.json.members | selectattr('role', 'equalto', 'leader') | map(attribute='name') | first }}"
+        pgbackrest_replicas: "{{ pgbackrest_cluster.json.members | rejectattr('role', 'equalto', 'leader') | map(attribute='name') | list }}"
+      when: pgbackrest_archive_change | bool
+
+    - name: "[pgbackrest] restart replicas first (apply pending archive_mode)"
+      ansible.builtin.command: "patronictl -c {{ pgbackrest_patroni_config }} restart {{ cluster_name }} {{ item }} --force"
+      changed_when: true
+      loop: "{{ pgbackrest_replicas }}"
+      when: pgbackrest_archive_change | bool
+
+    - name: "[pgbackrest] restart the leader last"
+      ansible.builtin.command: "patronictl -c {{ pgbackrest_patroni_config }} restart {{ cluster_name }} {{ pgbackrest_leader }} --force"
+      changed_when: true
+      when: pgbackrest_archive_change | bool
+
+# ── Phase 8: validate end-to-end (repo host) ─────────────────────────────────────
+- name: "[pgbackrest] check the stanza (config + archiving reachable)"
+  ansible.builtin.command: "pgbackrest --stanza={{ pgbackrest_stanza }} check"
+  become_user: "{{ postgres_user }}"
+  register: pgbackrest_check
+  changed_when: false
+  retries: 6
+  delay: 10
+  until: pgbackrest_check.rc == 0
+  when: inventory_hostname in groups[pgbackrest_repo_group]
+
+# ── Phase 9: initial full backup if the repo has none yet (repo host) ─────────────
+- name: "[pgbackrest] initial backup"
+  when:
+    - pgbackrest_initial_backup | bool
+    - inventory_hostname in groups[pgbackrest_repo_group]
+  block:
+    - name: "[pgbackrest] check for existing backups"
+      ansible.builtin.command: "pgbackrest --stanza={{ pgbackrest_stanza }} --output=json info"
+      become_user: "{{ postgres_user }}"
+      register: pgbackrest_info
+      changed_when: false
+
+    - name: "[pgbackrest] take the first full backup"
+      ansible.builtin.command: "pgbackrest --stanza={{ pgbackrest_stanza }} --type=full backup"
+      become_user: "{{ postgres_user }}"
+      register: pgbackrest_first_backup
+      changed_when: true
+      when: (pgbackrest_info.stdout | from_json | map(attribute='backup') | map('length') | sum) == 0
+
+# ── Phase 10: scheduled backups (systemd timers on the repo host) ─────────────────
+- name: "[pgbackrest] install backup service units"
+  ansible.builtin.template:
+    src: pgbackrest-backup.service.j2
+    dest: "/etc/systemd/system/pgbackrest-{{ item.type }}-backup.service"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ pgbackrest_backups }}"
+  when:
+    - pgbackrest_schedule_enabled | bool
+    - inventory_hostname in groups[pgbackrest_repo_group]
+
+- name: "[pgbackrest] install backup timer units"
+  ansible.builtin.template:
+    src: pgbackrest-backup.timer.j2
+    dest: "/etc/systemd/system/pgbackrest-{{ item.type }}-backup.timer"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ pgbackrest_backups }}"
+  when:
+    - pgbackrest_schedule_enabled | bool
+    - inventory_hostname in groups[pgbackrest_repo_group]
+
+- name: "[pgbackrest] enable + start backup timers"
+  ansible.builtin.systemd:
+    name: "pgbackrest-{{ item.type }}-backup.timer"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop: "{{ pgbackrest_backups }}"
+  when:
+    - pgbackrest_schedule_enabled | bool
+    - inventory_hostname in groups[pgbackrest_repo_group]

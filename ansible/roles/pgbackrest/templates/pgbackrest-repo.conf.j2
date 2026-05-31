@@ -1,0 +1,24 @@
+{{ ansible_managed | comment }}
+# pgBackRest repository-host config for {{ inventory_hostname }} — rendered by roles/pgbackrest.
+# This host stores the repo and runs backups, reaching the DB nodes over SSH.
+[global]
+repo1-path={{ pgbackrest_repo_path }}
+repo1-retention-full={{ pgbackrest_retention_full }}
+repo1-retention-archive-type=full
+process-max={{ pgbackrest_process_max }}
+log-level-console=info
+log-level-file=info
+log-path={{ pgbackrest_log_dir }}
+start-fast=y
+delta=y
+{% if pgbackrest_backup_standby %}
+backup-standby=y
+{% endif %}
+
+[{{ pgbackrest_stanza }}]
+{% for h in groups[pgbackrest_db_group] %}
+pg{{ loop.index }}-host={{ hostvars[h].private_ip | default(hostvars[h].ansible_host) }}
+pg{{ loop.index }}-host-user={{ postgres_user }}
+pg{{ loop.index }}-path={{ pgbackrest_pg_path }}
+pg{{ loop.index }}-port={{ pgbackrest_pg_port }}
+{% endfor %}

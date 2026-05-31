@@ -1,6 +1,75 @@
 ---
 # pgbackrest role defaults. Override per-cloud in inventory/<cloud>/group_vars/.
+#
+# Architecture (confirmed with the user): a DEDICATED repository host (the
+# `backup_server` group, e.g. bkp1) holds the pgBackRest repo on its mounted data
+# disk. The database nodes run pgBackRest agents and talk to the repo host over
+# passwordless SSH (postgres user). The repo host runs stanza-create and the
+# scheduled backups (pulling from a standby via backup-standby=y); the DB primary
+# pushes WAL via archive_command. Continuous archiving is enabled by setting
+# archive_mode=on + archive_command in Patroni's DCS config, followed by a controlled
+# rolling restart (archive_mode is restart-only).
 
-# Per-role override hook for the PPG repo pgBackRest installs from. Defaults to the
-# cluster-wide pg_percona_repo (ppg-<postgres_version>) set by pg_repos.
-pgbackrest_percona_repo: "{{ pg_percona_repo }}"
+# OS account pgBackRest runs as on every host. Exists on DB nodes (PG install);
+# created by this role on the repo host.
+postgres_user: postgres
+postgres_group: postgres
+
+# Per-role override hook for the PPG repo pgBackRest installs from.
+pgbackrest_percona_repo: "{{ pg_percona_repo | default('ppg-' ~ (postgres_version | default(17))) }}"
+pgbackrest_packages:
+  - percona-pgbackrest
+
+# Inventory groups for the two tiers.
+pgbackrest_db_group: database_hosts
+pgbackrest_repo_group: backup_server
+
+# One stanza for the whole Patroni cluster; named after the cluster.
+pgbackrest_stanza: "{{ cluster_name | default('poaf') }}"
+
+pgbackrest_config_dir: /etc/pgbackrest
+pgbackrest_config_file: /etc/pgbackrest/pgbackrest.conf
+pgbackrest_log_dir: /var/log/pgbackrest
+
+# --- repository host -------------------------------------------------------------
+# Repo lives on the backup server's mounted data disk (storage role mounts it at
+# postgres_mount_point). The repo host private IP the DB nodes push WAL to.
+pgbackrest_repo_path: "{{ postgres_mount_point | default('/var/lib/postgresql') }}/pgbackrest"
+pgbackrest_repo_host_ip: >-
+  {{ hostvars[groups[pgbackrest_repo_group][0]].private_ip
+     | default(hostvars[groups[pgbackrest_repo_group][0]].ansible_host) }}
+pgbackrest_retention_full: 4          # keep the last N full backups (and their WAL)
+pgbackrest_process_max: 2             # parallelism; <= vCPUs on the repo host
+pgbackrest_backup_standby: true       # offload backups to a streaming replica
+
+# Home directory to create for the postgres user ON THE REPO HOST (it has no PG).
+# Matches the per-family PG convention so the SSH key path is uniform cluster-wide.
+pgbackrest_repo_postgres_home_map:
+  RedHat: /var/lib/pgsql
+  Debian: /var/lib/postgresql
+pgbackrest_repo_postgres_home: "{{ pgbackrest_repo_postgres_home_map[ansible_os_family] }}"
+
+# --- database tier ---------------------------------------------------------------
+pgbackrest_pg_path: "{{ postgres_data_dir }}"
+pgbackrest_pg_port: "{{ postgres_port | default(5432) }}"
+
+# --- WAL archiving (applied to Patroni's DCS config, then rolling-restarted) ------
+pgbackrest_patroni_config: /etc/patroni/patroni.yml
+pgbackrest_patroni_restapi_port: "{{ patroni_restapi_port | default(8008) }}"
+pgbackrest_archive_command: "pgbackrest --stanza={{ pgbackrest_stanza }} archive-push %p"
+pgbackrest_archive_timeout: 600s
+
+# --- passwordless SSH mesh (postgres user, any-to-any across db + repo hosts) -----
+# One ed25519 keypair is generated once on the control node, persisted (gitignored)
+# under the inventory dir, and installed as the postgres user's key + authorized_keys
+# on every host so the repo host and DB nodes can reach each other.
+pgbackrest_ssh_key_type: ed25519
+pgbackrest_ssh_secret_dir: "{{ inventory_dir }}"
+
+# --- scheduled backups (systemd timers on the repo host) -------------------------
+pgbackrest_schedule_enabled: true
+pgbackrest_backups:
+  - { type: full, oncalendar: "Sun *-*-* 01:00:00" }
+  - { type: diff, oncalendar: "Mon..Sat *-*-* 01:00:00" }
+# Run an initial full backup at the end of the role if the stanza has none yet.
+pgbackrest_initial_backup: true

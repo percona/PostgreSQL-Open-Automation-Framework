@@ -141,3 +141,35 @@
             success_msg: >-
               HAProxy routing OK on {{ inventory_hostname }}: primary pool UP rows={{ primary_up }},
               standbys pool UP rows={{ standby_up }}.
+
+- name: pgBackRest backup check
+  hosts: backup_server
+  gather_facts: false
+  tasks:
+    # Only meaningful once pgBackRest is configured; skip otherwise.
+    - name: Verify the pgBackRest repository is healthy
+      when: pgbackrest_enabled | default(false) | bool
+      vars:
+        pgbr_stanza: "{{ pgbackrest_stanza | default(cluster_name | default('poaf')) }}"
+      block:
+        - name: Check the stanza (config + archiving reachable)
+          ansible.builtin.command: "pgbackrest --stanza={{ pgbr_stanza }} check"
+          become: true
+          become_user: "{{ postgres_user | default('postgres') }}"
+          changed_when: false
+
+        - name: Read backup info
+          ansible.builtin.command: "pgbackrest --stanza={{ pgbr_stanza }} --output=json info"
+          become: true
+          become_user: "{{ postgres_user | default('postgres') }}"
+          register: pgbr_info
+          changed_when: false
+
+        - name: Assert at least one backup exists
+          vars:
+            backup_count: "{{ pgbr_info.stdout | from_json | map(attribute='backup') | map('length') | sum }}"
+          ansible.builtin.assert:
+            that:
+              - backup_count | int >= 1
+            fail_msg: "pgBackRest stanza '{{ pgbr_stanza }}' has no backups."
+            success_msg: "pgBackRest OK: stanza '{{ pgbr_stanza }}' check passed, {{ backup_count }} backup(s) present."

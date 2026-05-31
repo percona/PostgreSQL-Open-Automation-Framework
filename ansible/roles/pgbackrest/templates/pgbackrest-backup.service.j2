@@ -1,0 +1,11 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=pgBackRest {{ item.type }} backup of stanza {{ pgbackrest_stanza }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ postgres_user }}
+Group={{ postgres_group }}
+ExecStart=/usr/bin/pgbackrest --stanza={{ pgbackrest_stanza }} --type={{ item.type }} backup

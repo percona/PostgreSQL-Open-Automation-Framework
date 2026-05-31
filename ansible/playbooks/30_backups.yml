@@ -1,8 +1,11 @@
 ---
-# 30_backups — pgBackRest. Skipped entirely when pgbackrest_enabled is false.
+# 30_backups — pgBackRest with a dedicated repository host. Skipped entirely when
+# pgbackrest_enabled is false. Targets BOTH tiers in one play so the role can wire the
+# repo host (backup_server) and the database agents (database_hosts) together — the
+# SSH mesh and the stanza/archive orchestration need both groups present at once.
 
-- name: Configure pgBackRest on database hosts
-  hosts: database_hosts
+- name: Configure pgBackRest (repository host + database agents)
+  hosts: backup_server:database_hosts
   become: true
   vars_files:
     - "{{ inventory_dir }}/credentials.json"

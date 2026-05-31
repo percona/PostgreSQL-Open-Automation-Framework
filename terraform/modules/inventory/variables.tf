@@ -31,6 +31,18 @@ variable "etcd_hosts_external" {
   default     = []
 }
 
+variable "haproxy_hosts" {
+  description = "Subset of vms[*].name in the HAProxy tier. Empty when unused."
+  type        = list(string)
+  default     = []
+}
+
+variable "backup_hosts" {
+  description = "Subset of vms[*].name acting as dedicated pgBackRest backup server(s). Empty when unused."
+  type        = list(string)
+  default     = []
+}
+
 variable "ssh_user" {
   type = string
 }

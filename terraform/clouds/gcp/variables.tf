@@ -35,6 +35,18 @@ variable "etcd_hosts" {
   default     = []
 }
 
+variable "haproxy_hosts" {
+  description = "Optional subset of vms[*].name to run HAProxy. Empty list = no HAProxy tier."
+  type        = list(string)
+  default     = []
+}
+
+variable "backup_hosts" {
+  description = "Optional subset of vms[*].name to act as dedicated pgBackRest backup server(s). Empty list = no dedicated backup server."
+  type        = list(string)
+  default     = []
+}
+
 variable "enable_ha" {
   description = "When true, enforces a quorum of >= 3 resolved etcd members."
   type        = bool

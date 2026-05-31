@@ -29,6 +29,20 @@ database_hosts = ["node1", "node2", "node3"]
 # ── etcd hosts (OPTIONAL) ────────────────────────────────────────────────────
 etcd_hosts = []
 
+# ── Optional tiers: HAProxy + dedicated pgBackRest backup server ──────────────
+# To provision these, add matching machines to the `vms` list above and list
+# their names here. Leave empty (default) to skip. Names must exist in `vms`.
+# Example:
+#   vms = [ ...the 3 db nodes...,
+#     { name = "ha1",  instance_type = "t3.medium", storage_gb = 20   },
+#     { name = "ha2",  instance_type = "t3.medium", storage_gb = 20   },
+#     { name = "bkp1", instance_type = "m6i.large", storage_gb = 1000 },
+#   ]
+#   haproxy_hosts = ["ha1", "ha2"]
+#   backup_hosts  = ["bkp1"]
+haproxy_hosts = []
+backup_hosts  = []
+
 # ── High availability ────────────────────────────────────────────────────────
 enable_ha = true
 

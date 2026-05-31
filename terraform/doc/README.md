@@ -26,3 +26,16 @@ Marketplace.
 
 Each cloud is a fully independent Terraform root — you only need credentials
 for the cloud whose directory you're working in.
+
+## Optional tiers: HAProxy + dedicated pgBackRest backup server
+
+Beyond the database/etcd nodes, you can optionally provision **HAProxy** load
+balancers and a **dedicated pgBackRest backup server**. They're declared the
+same way the database tier is: add the machines to the `vms` list, then tag them
+with the `haproxy_hosts` / `backup_hosts` name-lists in your
+`clouds/<cloud>/terraform.tfvars` (see the commented example in each
+`terraform.tfvars.example`). Leave the lists empty (the default) to skip them.
+
+They surface to Ansible as the `haproxy` and `backup_server` inventory groups,
+which the `haproxy` and `pgbackrest` roles target. Names listed must exist in
+`vms` — Terraform fails preflight otherwise.

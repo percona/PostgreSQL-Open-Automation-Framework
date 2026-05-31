@@ -23,10 +23,36 @@ locals {
     }
   ]
 
+  # HAProxy + dedicated pgBackRest backup-server tiers. Both are optional (empty
+  # lists when unused) and, unlike etcd, are always Terraform-provisioned vms, so
+  # vm_facts are always present. Same shape as database_inventory.
+  haproxy_inventory = [
+    for n in var.haproxy_hosts : {
+      name              = n
+      ip                = try(var.vm_facts[n].public_ip, n)
+      data_disk_size_gb = try(var.vm_facts[n].data_disk_size_gb, 0)
+      data_disk_device  = try(var.vm_facts[n].data_disk_device, "")
+    }
+  ]
+
+  backup_inventory = [
+    for n in var.backup_hosts : {
+      name              = n
+      ip                = try(var.vm_facts[n].public_ip, n)
+      data_disk_size_gb = try(var.vm_facts[n].data_disk_size_gb, 0)
+      data_disk_device  = try(var.vm_facts[n].data_disk_device, "")
+    }
+  ]
+
   # YAML inventory: hostvars live at all.hosts.<name>; groups just reference
   # names. Avoids the var-merge gymnastics that come with listing hostvars
   # under each group's hosts: mapping.
-  all_hosts = distinct(concat(var.database_hosts, var.resolved_etcd_hosts))
+  all_hosts = distinct(concat(
+    var.database_hosts,
+    var.resolved_etcd_hosts,
+    var.haproxy_hosts,
+    var.backup_hosts,
+  ))
 
   hostvars_yaml = {
     for n in local.all_hosts : n => merge(
@@ -58,6 +84,12 @@ locals {
         etcd_cluster = {
           hosts = { for n in var.resolved_etcd_hosts : n => {} }
         }
+        haproxy = {
+          hosts = { for n in var.haproxy_hosts : n => {} }
+        }
+        backup_server = {
+          hosts = { for n in var.backup_hosts : n => {} }
+        }
       }
     }
   }
@@ -82,6 +114,8 @@ resource "local_file" "inventory" {
     ssh_private_key_file = local.ssh_key_expanded
     database_hosts       = local.database_inventory
     etcd_hosts           = local.etcd_inventory
+    haproxy_hosts        = local.haproxy_inventory
+    backup_hosts         = local.backup_inventory
   })
 }
 

@@ -25,6 +25,17 @@ locals {
     for n in local.resolved_etcd_hosts : n if !contains(local.vm_names, n)
   ]
 
+  # HAProxy + dedicated pgBackRest backup-server tiers select from vms[*].name,
+  # just like database_hosts. Both are always provisioned (no external pass-
+  # through like etcd), so any name not present in vms is an error.
+  unknown_haproxy_hosts = [
+    for n in var.haproxy_hosts : n if !contains(local.vm_names, n)
+  ]
+
+  unknown_backup_hosts = [
+    for n in var.backup_hosts : n if !contains(local.vm_names, n)
+  ]
+
   etcd_quorum_ok = !(var.enable_ha && length(local.resolved_etcd_hosts) < 3)
 }
 
@@ -57,6 +68,16 @@ resource "terraform_data" "preflight" {
       condition     = local.etcd_quorum_ok
       error_message = "HA requires at least 3 etcd nodes; only ${length(local.resolved_etcd_hosts)} resolved"
     }
+
+    precondition {
+      condition     = length(local.unknown_haproxy_hosts) == 0
+      error_message = "haproxy_hosts contains unknown vm name: ${join(", ", local.unknown_haproxy_hosts)}"
+    }
+
+    precondition {
+      condition     = length(local.unknown_backup_hosts) == 0
+      error_message = "backup_hosts contains unknown vm name: ${join(", ", local.unknown_backup_hosts)}"
+    }
   }
 }
 
@@ -84,6 +105,8 @@ module "inventory" {
   database_hosts             = var.database_hosts
   resolved_etcd_hosts        = local.resolved_etcd_hosts
   etcd_hosts_external        = local.etcd_hosts_external
+  haproxy_hosts              = var.haproxy_hosts
+  backup_hosts               = var.backup_hosts
   ssh_user                   = var.ssh_user
   ssh_private_key_path       = var.ssh_private_key_path
   ssh_public_key_path        = var.ssh_public_key_path

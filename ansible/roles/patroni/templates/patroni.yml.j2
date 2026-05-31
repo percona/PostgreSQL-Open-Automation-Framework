@@ -1,0 +1,78 @@
+{{ ansible_managed | comment }}
+# Patroni config for {{ inventory_hostname }} — rendered by roles/patroni.
+# The bootstrap: section is applied ONLY when this node initializes a brand-new
+# cluster. Editing it later and reloading has no effect (it lives in the DCS by then);
+# change running clusters with `patronictl edit-config`.
+scope: "{{ patroni_scope }}"
+namespace: "{{ patroni_namespace }}"
+name: "{{ inventory_hostname }}"
+
+restapi:
+  listen: "0.0.0.0:{{ patroni_restapi_port }}"
+  connect_address: "{{ patroni_node_ip }}:{{ patroni_restapi_port }}"
+
+etcd3:
+  hosts:
+{% for h in groups['etcd_cluster'] %}
+    - "{{ hostvars[h].private_ip | default(hostvars[h].ansible_host) }}:{{ patroni_etcd_client_port }}"
+{% endfor %}
+{% if patroni_etcd_scheme == 'https' %}
+  protocol: https
+{% endif %}
+
+bootstrap:
+  dcs:
+    ttl: {{ patroni_dcs_ttl }}
+    loop_wait: {{ patroni_dcs_loop_wait }}
+    retry_timeout: {{ patroni_dcs_retry_timeout }}
+    maximum_lag_on_failover: {{ patroni_dcs_maximum_lag_on_failover }}
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+{% for k, v in patroni_postgresql_parameters.items() %}
+        {{ k }}: "{{ v }}"
+{% endfor %}
+  initdb:
+{% for opt in patroni_initdb %}
+{% if opt is mapping %}
+{% for k, v in opt.items() %}
+    - {{ k }}: {{ v }}
+{% endfor %}
+{% else %}
+    - {{ opt }}
+{% endif %}
+{% endfor %}
+  pg_hba:
+{% for rule in patroni_pg_hba %}
+    - {{ rule }}
+{% endfor %}
+
+postgresql:
+  listen: "{{ patroni_postgresql_listen_host }}:{{ postgres_port }}"
+  connect_address: "{{ patroni_node_ip }}:{{ postgres_port }}"
+  data_dir: "{{ patroni_data_dir }}"
+  bin_dir: "{{ patroni_pg_bin_dir }}"
+  pgpass: "{{ patroni_pgpass }}"
+  authentication:
+    replication:
+      username: "{{ patroni_replication_username }}"
+      password: "{{ patroni_replication_password_effective }}"
+    superuser:
+      username: "{{ patroni_superuser_username }}"
+      password: "{{ patroni_superuser_password_effective }}"
+  parameters:
+    unix_socket_directories: "{{ patroni_socket_dir }}"
+  create_replica_methods:
+    - basebackup
+  basebackup:
+    checkpoint: fast
+
+watchdog:
+  mode: "{{ patroni_watchdog_mode }}"
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false

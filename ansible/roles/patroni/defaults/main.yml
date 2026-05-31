@@ -1,6 +1,116 @@
 ---
-# patroni role defaults. Override per-cloud in inventory/<cloud>/group_vars/.
+# patroni role defaults. Override per-cloud in inventory/<cloud>/group_vars/
+# (inventory group_vars beat role defaults).
+#
+# Patroni takes over PostgreSQL entirely: it runs initdb on first start, renders
+# postgresql.conf/pg_hba.conf from the config below, and owns start/stop/failover via
+# the etcd DCS. The postgresql role already installed PG, masked the packaged unit,
+# and left an empty data_dir for Patroni to initialize.
 
+# --- packages / repo --------------------------------------------------------------
 # Per-role override hook for the PPG repo Patroni installs from. Defaults to the
 # cluster-wide pg_percona_repo (ppg-<postgres_version>) set by pg_repos.
 patroni_percona_repo: "{{ pg_percona_repo }}"
+
+# Patroni ships from the Percona PPG repo as `percona-patroni` on both families.
+patroni_packages:
+  - percona-patroni
+
+# Where the percona-patroni package installs the patroni / patronictl binaries.
+patroni_bin_dir: /usr/bin
+
+# --- paths ------------------------------------------------------------------------
+patroni_config_dir: /etc/patroni
+patroni_config_file: "{{ patroni_config_dir }}/patroni.yml"
+# Patroni writes a .pgpass here (as the postgres user). Kept inside the postgres-owned
+# config dir rather than /tmp so it isn't world-traversable or cleared on reboot.
+patroni_pgpass: "{{ patroni_config_dir }}/.pgpass"
+# PostgreSQL data + binaries. Supplied by the postgresql role / group_vars (postgres
+# is managed by Patroni, but these locations are shared with the postgresql role so
+# both agree on where PG lives).
+patroni_data_dir: "{{ postgres_data_dir }}"
+patroni_pg_bin_dir: "{{ postgres_bin_dir }}"
+# PostgreSQL's unix socket dir. The PPG package ships /var/run/postgresql on both
+# families; Patroni points libpq/psql at it.
+patroni_socket_dir: /var/run/postgresql
+
+# --- cluster identity / networking ------------------------------------------------
+# Patroni "scope" is the cluster name in the DCS; matches cluster_name so patronictl
+# and the etcd key prefix line up with the rest of the framework.
+patroni_scope: "{{ cluster_name }}"
+patroni_namespace: /service
+patroni_restapi_port: 8008
+# Address this node advertises (REST + PostgreSQL connect_address). Private IP from
+# the Terraform inventory; ansible_host is the fallback for hand-built inventories.
+patroni_node_ip: "{{ private_ip | default(ansible_host) }}"
+# Bind address for PostgreSQL (Patroni sets listen_addresses from this).
+patroni_postgresql_listen_host: 0.0.0.0
+
+# The bootstrap leader: Patroni elects via the DCS lock, but we deterministically start
+# this node first so it initializes the cluster and the others join as replicas
+# (Percona's documented "start node1 first, then the rest one-by-one" sequence).
+patroni_primary_host: "{{ groups['database_hosts'][0] }}"
+
+# --- etcd DCS ---------------------------------------------------------------------
+# Patroni talks to the same etcd cluster the etcd role deployed. Built from the
+# etcd_cluster group at template time. etcd_scheme/etcd_client_port fall back to the
+# etcd role defaults (this play carries no etcd role); an inventory override flows
+# through. Patroni's etcd3 backend = etcd v3 API, matching the etcd role's ETCDCTL_API=3.
+patroni_etcd_scheme: "{{ etcd_scheme | default('http') }}"
+patroni_etcd_client_port: "{{ etcd_client_port | default(2379) }}"
+
+# --- DCS-wide PostgreSQL settings (written once, on bootstrap) --------------------
+patroni_dcs_ttl: 30
+patroni_dcs_loop_wait: 10
+patroni_dcs_retry_timeout: 10
+patroni_dcs_maximum_lag_on_failover: 1048576
+
+# PostgreSQL parameters Patroni writes into the cluster config. Replication-oriented
+# defaults sufficient for Patroni + pg_rewind; tune per-cloud as needed.
+# NOTE: archive_mode stays "off" here — the pgbackrest role (later phase) enables WAL
+# archiving. Flipping archive_mode on/off requires a full PG restart, so we leave it to
+# the role that actually configures an archive destination.
+patroni_postgresql_parameters:
+  max_connections: 100
+  wal_level: replica
+  hot_standby: "on"
+  max_wal_senders: 10
+  max_replication_slots: 10
+  wal_log_hints: "on"
+  logging_collector: "on"
+  archive_mode: "off"
+
+# initdb options for the brand-new cluster (list form, as Patroni requires).
+patroni_initdb:
+  - encoding: UTF8
+  - data-checksums
+
+# pg_hba.conf entries Patroni writes after initdb. scram-sha-256 is the modern default
+# (PG17). Replication from cluster members + client access from anywhere over scram.
+# Tighten the 0.0.0.0/0 client rule per-cloud if you front PG with a private subnet.
+patroni_pg_hba:
+  - local all all peer
+  - host all all 127.0.0.1/32 scram-sha-256
+  - host all all 0.0.0.0/0 scram-sha-256
+  - host all all ::1/128 scram-sha-256
+  - local replication all peer
+  - host replication replicator 127.0.0.1/32 scram-sha-256
+  - host replication replicator 0.0.0.0/0 scram-sha-256
+
+# --- watchdog ---------------------------------------------------------------------
+# Cloud VMs rarely expose /dev/watchdog; "required" would block Patroni from starting.
+# Default off; set to "automatic"/"required" where a watchdog device exists.
+patroni_watchdog_mode: "off"
+
+# --- credentials ------------------------------------------------------------------
+# Superuser (postgres) and replication passwords. Leave empty to have the role generate
+# a strong random password ONCE and persist it under the inventory dir (gitignored, see
+# .gitignore), so re-runs reuse the same value and replication keeps working. Override
+# here or via -e to supply your own. The same value is used on every cluster node.
+patroni_superuser_username: postgres
+patroni_superuser_password: ""
+patroni_replication_username: replicator
+patroni_replication_password: ""
+# Where generated passwords are persisted (one file each, mode 0600, on the control
+# node). Per-cloud because inventory_dir is per-cloud.
+patroni_secret_dir: "{{ inventory_dir }}"

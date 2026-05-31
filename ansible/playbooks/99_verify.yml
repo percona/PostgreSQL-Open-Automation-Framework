@@ -72,3 +72,40 @@
     - name: Show cluster health
       ansible.builtin.debug:
         msg: "{{ etcd_cluster_health.stdout_lines + etcd_cluster_health.stderr_lines }}"
+
+- name: Patroni cluster health
+  hosts: database_hosts[0]
+  gather_facts: false
+  tasks:
+    - name: Query the Patroni cluster state (REST API)
+      ansible.builtin.uri:
+        # This play carries no patroni role; fall back to the role default REST port.
+        # An inventory override of patroni_restapi_port still flows through.
+        url: "http://127.0.0.1:{{ patroni_restapi_port | default(8008) }}/cluster"
+        return_content: true
+      register: patroni_cluster
+      changed_when: false
+
+    - name: Assert exactly one leader and every database host is a member
+      vars:
+        members: "{{ (patroni_cluster.content | from_json).members }}"
+      ansible.builtin.assert:
+        that:
+          - members | selectattr('role', 'equalto', 'leader') | list | length == 1
+          - members | length == groups['database_hosts'] | length
+        fail_msg: >-
+          Patroni reports {{ members | length }} member(s) and
+          {{ members | selectattr('role', 'equalto', 'leader') | list | length }} leader(s);
+          expected {{ groups['database_hosts'] | length }} member(s) and exactly 1 leader.
+        success_msg: >-
+          Patroni: {{ members | length }} member(s), 1 leader
+          ({{ members | selectattr('role', 'equalto', 'leader') | map(attribute='name') | first }}).
+
+    - name: Show Patroni topology
+      vars:
+        members: "{{ (patroni_cluster.content | from_json).members }}"
+      ansible.builtin.debug:
+        msg: >-
+          {{ members | map(attribute='name')
+             | zip(members | map(attribute='role'), members | map(attribute='state'))
+             | list }}

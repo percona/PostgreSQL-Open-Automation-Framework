@@ -1,0 +1,29 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Runners to orchestrate a high-availability PostgreSQL (POAF / Patroni)
+Documentation=https://docs.percona.com/postgresql/17/solutions/ha-patroni/
+After=syslog.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ postgres_user }}
+Group={{ postgres_group }}
+
+# Start the patroni process.
+ExecStart={{ patroni_bin_dir }}/patroni {{ patroni_config_file }}
+
+# Send HUP to reload patroni.yml (non-bootstrap settings) without a restart.
+ExecReload=/bin/kill -s HUP $MAINPID
+
+# Only kill the patroni process, not its children, so it gracefully stops PostgreSQL.
+KillMode=process
+
+# Give the server a reasonable amount of time to start up / shut down.
+TimeoutSec=30
+
+# Do not auto-restart on crash: a failed Patroni should be inspected, not looped.
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

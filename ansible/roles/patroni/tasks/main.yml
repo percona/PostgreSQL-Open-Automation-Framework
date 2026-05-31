@@ -1,12 +1,139 @@
 ---
-# patroni — install Patroni, write patroni.yml pointing at the etcd cluster,
-# install the systemd unit, start the service. PG will be managed by Patroni
-# from this point on — don't `systemctl start postgresql` directly.
-# TODO: implement.
+# patroni — install Patroni, render patroni.yml pointed at the etcd DCS, install the
+# systemd unit, and bring the cluster up leader-first. From here Patroni owns
+# PostgreSQL: it runs initdb on the empty data_dir the postgresql role prepared, writes
+# postgresql.conf/pg_hba.conf, and manages start/stop/failover. Don't drive PG directly.
+#
+# Mirrors Percona's "High availability with Patroni" guide:
+#   https://docs.percona.com/postgresql/17/solutions/ha-patroni/
 
-- name: "[patroni] scaffold — not yet implemented"
+- name: "[patroni] assert a supported OS family"
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family in ['Debian', 'RedHat']
+    fail_msg: >-
+      patroni role supports Debian/Ubuntu and RHEL/Rocky only
+      (got ansible_os_family={{ ansible_os_family }}).
+
+# Same include pattern the etcd/postgresql roles use; patroni_percona_repo defaults to
+# pg_percona_repo (ppg-<postgres_version>). EPEL (needed by Patroni on RHEL) is enabled
+# by pg_repos.
+- name: "[patroni] configure Percona PPG repository"
+  ansible.builtin.include_role:
+    name: pg_repos
+  vars:
+    pg_repos_repo: "{{ patroni_percona_repo }}"
+
+- name: "[patroni] install Patroni packages"
+  ansible.builtin.package:
+    name: "{{ patroni_packages }}"
+    state: present
+
+# Generate the superuser + replication passwords ONCE on the control node and persist
+# them (gitignored) so re-runs reuse the same values — otherwise replicas couldn't
+# reconnect after a password change. run_once + set_fact makes the same value visible
+# to every host in the play. An explicit patroni_*_password override wins over the
+# generated one.
+- name: "[patroni] generate or load cluster passwords (control node, once)"
+  run_once: true
+  ansible.builtin.set_fact:
+    patroni_superuser_password_effective: >-
+      {{ patroni_superuser_password
+         or lookup('password', patroni_secret_dir ~ '/.patroni_superuser.pass chars=ascii_letters,digits length=28') }}
+    patroni_replication_password_effective: >-
+      {{ patroni_replication_password
+         or lookup('password', patroni_secret_dir ~ '/.patroni_replicator.pass chars=ascii_letters,digits length=28') }}
+
+- name: "[patroni] create config directory (owned by postgres)"
+  ansible.builtin.file:
+    path: "{{ patroni_config_dir }}"
+    state: directory
+    owner: "{{ postgres_user }}"
+    group: "{{ postgres_group }}"
+    mode: "0750"
+
+# PostgreSQL's unix socket directory. The PPG package ships a tmpfiles entry that
+# recreates this on boot; create it now so Patroni's first start has somewhere to bind.
+- name: "[patroni] ensure the PostgreSQL socket directory exists"
+  ansible.builtin.file:
+    path: "{{ patroni_socket_dir }}"
+    state: directory
+    owner: "{{ postgres_user }}"
+    group: "{{ postgres_group }}"
+    mode: "0755"
+
+- name: "[patroni] render patroni.yml"
+  ansible.builtin.template:
+    src: patroni.yml.j2
+    dest: "{{ patroni_config_file }}"
+    owner: "{{ postgres_user }}"
+    group: "{{ postgres_group }}"
+    mode: "0600"
+  notify: Reload patroni
+
+- name: "[patroni] install systemd unit"
+  ansible.builtin.template:
+    src: percona-patroni.service.j2
+    dest: /etc/systemd/system/percona-patroni.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: patroni_unit
+
+- name: "[patroni] reload systemd if the unit changed"
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: patroni_unit is changed
+
+# Bring the cluster up leader-first (Percona's documented sequence: start node1, let it
+# initialize + take the leader lock, then start the rest as replicas). The default
+# linear strategy enforces the ordering: the replica-start task below is reached only
+# after every host has finished the leader-wait task, so replicas never start before
+# the bootstrap leader is the running primary.
+- name: "[patroni] start Patroni on the bootstrap leader first"
+  ansible.builtin.systemd:
+    name: percona-patroni
+    state: started
+    enabled: true
+  when: inventory_hostname == patroni_primary_host
+
+- name: "[patroni] wait for the bootstrap leader to become the running primary"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ patroni_restapi_port }}/primary"
+  register: patroni_primary_health
+  until: patroni_primary_health.status | default(0) == 200
+  retries: 60
+  delay: 5
+  when: inventory_hostname == patroni_primary_host
+
+- name: "[patroni] start Patroni on the remaining nodes (join as replicas)"
+  ansible.builtin.systemd:
+    name: percona-patroni
+    state: started
+    enabled: true
+  when: inventory_hostname != patroni_primary_host
+
+- name: "[patroni] wait for each node's PostgreSQL to report healthy"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ patroni_restapi_port }}/health"
+  register: patroni_node_health
+  until: patroni_node_health.status | default(0) == 200
+  retries: 60
+  delay: 5
+
+# Apply any pending config reload before reporting topology, so `patronictl list`
+# reflects the running config.
+- name: "[patroni] apply pending reloads"
+  ansible.builtin.meta: flush_handlers
+
+- name: "[patroni] show cluster topology"
+  run_once: true
+  delegate_to: "{{ patroni_primary_host }}"
+  ansible.builtin.command: "{{ patroni_bin_dir }}/patronictl -c {{ patroni_config_file }} list"
+  changed_when: false
+  register: patroni_topology
+
+- name: "[patroni] cluster topology"
+  run_once: true
   ansible.builtin.debug:
-    msg: >-
-      Placeholder for Patroni install on {{ inventory_hostname }}.
-      Cluster name: {{ cluster_name }}.
-      DCS: etcd at {{ groups['etcd_cluster'] | map('extract', hostvars, 'private_ip') | join(',') }}.
+    msg: "{{ patroni_topology.stdout_lines }}"

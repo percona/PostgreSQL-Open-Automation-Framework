@@ -1,0 +1,8 @@
+---
+# Reload Patroni on config change rather than restart: SIGHUP re-reads patroni.yml's
+# non-bootstrap settings without bouncing PostgreSQL or risking a failover. (Bootstrap
+# settings are already in the DCS and need `patronictl edit-config`, not a reload.)
+- name: Reload patroni
+  ansible.builtin.systemd:
+    name: percona-patroni
+    state: reloaded

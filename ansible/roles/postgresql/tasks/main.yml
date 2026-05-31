@@ -1,11 +1,112 @@
 ---
-# postgresql — install PG packages and write base postgresql.conf / pg_hba.conf.
-# Distribution-agnostic: relies on pg_repos to have set the right repo.
-# TODO: implement. Will pin data_directory to {{ postgres_data_dir }}.
+# postgresql — install PostgreSQL from the Percona PPG repo and prepare the host so
+# Patroni can take over. We deliberately do NOT initdb, write postgresql.conf, or
+# start a server here: in this framework Patroni owns all of that (see roles/patroni).
+# This role's job is purely to lay packages down cleanly and get out of Patroni's way.
+#
+# Mirrors the Percona "High availability with Patroni" setup:
+#   https://docs.percona.com/postgresql/17/solutions/ha-patroni/
+# distribution-agnostic install: pg_repos has already enabled the right repository.
 
-- name: "[postgresql] scaffold — not yet implemented"
+- name: "[postgresql] assert a supported OS family"
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family in ['Debian', 'RedHat']
+    fail_msg: >-
+      postgresql role supports Debian/Ubuntu and RHEL/Rocky only
+      (got ansible_os_family={{ ansible_os_family }}).
+
+# Delegate repo setup to pg_repos. postgresql_percona_repo defaults to pg_percona_repo
+# (ppg-<postgres_version>); see roles/etcd for the same include pattern.
+- name: "[postgresql] configure Percona PPG repository"
+  ansible.builtin.include_role:
+    name: pg_repos
+  vars:
+    pg_repos_repo: "{{ postgresql_percona_repo }}"
+
+# On RHEL/Rocky 8+ the OS ships a built-in `postgresql` module stream that shadows the
+# Percona packages and causes dependency conflicts. Disable it before installing.
+# Idempotent: dnf prints "Nothing to do." when the module is already disabled.
+- name: "[postgresql] disable the built-in postgresql dnf module (RHEL/Rocky 8+)"
+  ansible.builtin.command: dnf -y module disable postgresql
+  register: postgresql_module_disable
+  changed_when: "'Nothing to do' not in postgresql_module_disable.stdout"
+  when:
+    - ansible_os_family == 'RedHat'
+    - ansible_distribution_major_version | int >= 8
+
+- name: "[postgresql] check whether the server binary is already installed"
+  ansible.builtin.stat:
+    path: "{{ postgres_bin_dir }}/postgres"
+  register: postgresql_server_binary
+
+# Block the package's auto-start during install. On Debian, postgresql-common's
+# postinst creates and immediately starts a "main" cluster; we don't want it running
+# (Patroni will manage PG), and on a busy port it can abort dpkg. Same policy-rc.d
+# deny-shim pattern roles/etcd uses. Debian-only and first-install-only so re-runs
+# stay no-op.
+- name: "[postgresql] install PostgreSQL packages (no auto-start)"
+  block:
+    - name: "[postgresql] install policy-rc.d service-start blocker"
+      ansible.builtin.copy:
+        dest: /usr/sbin/policy-rc.d
+        content: "#!/bin/sh\nexit 101\n"
+        mode: "0755"
+      when:
+        - ansible_os_family == 'Debian'
+        - not postgresql_server_binary.stat.exists
+
+    - name: "[postgresql] install PostgreSQL packages"
+      ansible.builtin.package:
+        name: "{{ postgresql_packages }}"
+        state: present
+
+  always:
+    - name: "[postgresql] remove policy-rc.d service-start blocker"
+      ansible.builtin.file:
+        path: /usr/sbin/policy-rc.d
+        state: absent
+      when: ansible_os_family == 'Debian'
+
+# Patroni manages PostgreSQL directly via pg_ctl, not through the packaged systemd
+# unit. Stop, disable, and mask that unit so nothing — an operator, a reboot, a
+# package upgrade — can start a second postmaster that fights Patroni for the data dir.
+- name: "[postgresql] stop, disable and mask the packaged service (Patroni is sole manager)"
+  ansible.builtin.systemd:
+    name: "{{ postgresql_service }}"
+    state: stopped
+    enabled: false
+    masked: true
+
+# Drop Debian's throwaway "main" cluster so it can't auto-start and so the data area
+# is clean for Patroni. We never use this cluster (Patroni initializes its own at
+# postgres_data_dir). Safe and idempotent: once absent it stays absent, and it is a
+# different path from postgres_data_dir so a Patroni-initialized cluster is untouched.
+- name: "[postgresql] remove the Debian auto-created 'main' cluster"
+  ansible.builtin.file:
+    path: "{{ postgresql_debian_autocluster_dir }}"
+    state: absent
+  when: ansible_os_family == 'Debian'
+
+# Create the data directory on the mounted disk (roles/storage mounts the data disk at
+# /var/lib/postgresql; postgres_data_dir lives under it). Empty + owned by postgres +
+# 0700 is exactly what Patroni's initdb expects. If Patroni has already initialized it,
+# this is a no-op and does NOT wipe data.
+- name: "[postgresql] ensure the PG data directory exists on the mounted disk"
+  ansible.builtin.file:
+    path: "{{ postgres_data_dir }}"
+    state: directory
+    owner: "{{ postgres_user }}"
+    group: "{{ postgres_group }}"
+    mode: "0700"
+
+# Smoke test: confirms the packages installed and postgres_bin_dir resolved correctly
+# (this is the path Patroni will use as its bin_dir), without starting a server.
+- name: "[postgresql] confirm the server binary runs and report its version"
+  ansible.builtin.command: "{{ postgres_bin_dir }}/postgres --version"
+  register: postgresql_server_version
+  changed_when: false
+
+- name: "[postgresql] installed PostgreSQL version"
   ansible.builtin.debug:
-    msg: >-
-      Placeholder for PostgreSQL {{ postgres_version }} install on
-      {{ inventory_hostname }} ({{ pg_distribution }} packages).
-      Will write postgresql.conf with data_directory={{ postgres_data_dir }}.
+    msg: "{{ postgresql_server_version.stdout }} (bin_dir: {{ postgres_bin_dir }})"

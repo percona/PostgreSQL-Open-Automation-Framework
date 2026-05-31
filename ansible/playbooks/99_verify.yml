@@ -8,6 +8,27 @@
     - name: SSH and Python reachable
       ansible.builtin.ping:
 
+- name: PostgreSQL install check
+  hosts: database_hosts
+  gather_facts: true
+  vars:
+    # This play carries no postgresql role, so recompute bin_dir from the same family
+    # map the role uses. postgres_version comes from playbooks/group_vars/all.yml; an
+    # inventory override of postgres_bin_dir still flows through (it outranks this).
+    postgres_bin_dir: >-
+      {{ '/usr/lib/postgresql/' ~ postgres_version ~ '/bin'
+         if ansible_os_family == 'Debian'
+         else '/usr/pgsql-' ~ postgres_version ~ '/bin' }}
+  tasks:
+    - name: Assert the PostgreSQL server binary is installed
+      ansible.builtin.command: "{{ postgres_bin_dir }}/postgres --version"
+      register: pg_server_version
+      changed_when: false
+
+    - name: Show installed PostgreSQL version
+      ansible.builtin.debug:
+        msg: "{{ pg_server_version.stdout }}"
+
 - name: etcd cluster health
   hosts: etcd_cluster[0]
   gather_facts: false

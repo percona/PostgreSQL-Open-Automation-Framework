@@ -75,6 +75,9 @@ ansible-galaxy install -r requirements.yml
 eval $(ssh-agent -s)
 ssh-add ~/.ssh/id_rsa
 
+## Verify the Ansible connectivity to the hosts
+ansible -i inventory/gcp/hosts.yml all -m ping
+
 # 3. OS prep, then bootstrap the etcd cluster
 ansible-playbook -i inventory/gcp playbooks/00_prepare.yml
 ansible-playbook -i inventory/gcp playbooks/10_etcd.yml

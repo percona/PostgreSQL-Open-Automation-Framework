@@ -88,11 +88,150 @@ ansible-playbook -i inventory/gcp playbooks/99_verify.yml
 `site.yml` runs the full (partly stubbed) pipeline in one shot:
 
 ```bash
-ansible-playbook -i inventory/gcp playbooks/site.yml
+ansible-playbook -i inventory/gcp playbooks/site.yml    # or aws, azure
 ```
 
 Re-running any of these is safe — the roles are idempotent (a second `10_etcd.yml`
 run reports `changed=0` and does **not** restart a healthy cluster).
+
+---
+
+## Manual inventory (servers from a system engineer, no Terraform)
+
+If the VMs are provisioned outside Terraform — by a system engineer, an existing bare-metal pool, or another tool — skip `sync-inventory.sh` and write the inventory by hand.
+
+### 1. Create the inventory directory
+
+```bash
+mkdir -p ansible/inventory/manual/group_vars/all
+```
+
+Use any name you like in place of `manual` (`bare-metal`, `prod`, etc.). The playbooks only care that `-i inventory/<name>` points at a directory with the expected files.
+
+### 2. Write `hosts.yml`
+
+This is the **only** inventory file you need. Do not create `hosts.ini` — it is a read-only compatibility artifact that `sync-inventory.sh` generates automatically from the YAML. Maintaining both by hand creates a sync hazard.
+
+```yaml
+# ansible/inventory/manual/hosts.yml
+all:
+  children:
+    database_hosts:
+      hosts:
+        node1: {}
+        node2: {}
+        node3: {}
+    etcd_cluster:
+      hosts:
+        node1: {}
+        node2: {}
+        node3: {}
+  hosts:
+    node1:
+      ansible_host: 192.168.1.10          # public/jump IP used for SSH
+      ansible_user: rocky
+      ansible_ssh_private_key_file: /root/.ssh/id_rsa
+      private_ip: 10.0.0.10               # internal IP — Patroni peers + etcd cluster URLs
+      zone: dc1-rack-a                    # failover-domain label (any string)
+      instance_type: bare-metal-large     # drives shared_buffers calculation
+      data_disk_device: /dev/sdb          # block device the storage role will format + mount
+      data_disk_size_gb: 500
+    node2:
+      ansible_host: 192.168.1.11
+      ansible_user: rocky
+      ansible_ssh_private_key_file: /root/.ssh/id_rsa
+      private_ip: 10.0.0.11
+      zone: dc1-rack-b
+      instance_type: bare-metal-large
+      data_disk_device: /dev/sdb
+      data_disk_size_gb: 500
+    node3:
+      ansible_host: 192.168.1.12
+      ansible_user: rocky
+      ansible_ssh_private_key_file: /root/.ssh/id_rsa
+      private_ip: 10.0.0.12
+      zone: dc1-rack-c
+      instance_type: bare-metal-large
+      data_disk_device: /dev/sdb
+      data_disk_size_gb: 500
+```
+
+Per-host variables:
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `ansible_host` | Yes | Reachable IP or hostname used for SSH |
+| `ansible_user` | Yes | SSH login user |
+| `ansible_ssh_private_key_file` | Yes | Path to the SSH private key on **your workstation** |
+| `private_ip` | See below | Internal IP for etcd peer URLs and Patroni replication |
+| `zone` | Yes | Failure-domain label (rack, AZ, datacenter — any string) |
+| `instance_type` | Yes | Drives `shared_buffers` and `max_connections` calculations in role defaults |
+| `data_disk_device` | Yes (DB nodes) | Block device the `storage` role will format and mount at `/var/lib/postgresql` |
+| `data_disk_size_gb` | Yes (DB nodes) | Size of that device in GiB |
+
+**When `private_ip` is required vs optional:**
+
+The etcd role builds a cluster peer list that every node must agree on. It uses
+`private_ip | default(ansible_host)`, so if `private_ip` is absent it falls back to
+`ansible_host`. Whether that fallback is correct depends on your network:
+
+- **Single-NIC host** (typical bare-metal): `ansible_host` IS the internal IP — omit
+  `private_ip` and the fallback works correctly.
+- **Multi-homed host** (cloud VM with a public IP for SSH and a separate internal IP for
+  cluster traffic): `ansible_host` is the public IP. You must set `private_ip` to the
+  internal IP, otherwise etcd and Patroni advertise a public address and cluster
+  communication crosses the internet — or fails if firewall rules block the peer ports.
+
+When Terraform provisions the VMs it knows both IPs definitively, so it always emits
+`private_ip`. For a hand-written inventory, set it whenever `ansible_host` is a public
+address that differs from the internal cluster address.
+
+> **etcd-only nodes** (`etcd_cluster` members that are not in `database_hosts`) do not
+> need `data_disk_device` or `data_disk_size_gb` — the `storage` role skips them.
+
+### 3. Write `credentials.json`
+
+```bash
+cat > ansible/inventory/manual/credentials.json <<'EOF'
+{
+  "ssh_user": "rocky",
+  "ssh_private_key_file": "/root/.ssh/id_rsa",
+  "ssh_public_key_file": "/root/.ssh/id_rsa.pub",
+  "provider": "bare-metal"
+}
+EOF
+chmod 600 ansible/inventory/manual/credentials.json
+```
+
+This file is referenced via `vars_files:` in every play. Keep it mode `0600` — it is gitignored.
+
+### 4. Write `group_vars/all/cloud.yml`
+
+```yaml
+# ansible/inventory/manual/group_vars/all/cloud.yml
+provider: bare-metal
+region: dc1
+
+# Override any role default here, e.g.:
+# timezone: America/New_York
+# etcd_install_method: binary   # if the Percona repo is unreachable
+```
+
+### 5. Run the playbooks
+
+Exactly the same commands as the Terraform path, just pointing at your directory:
+
+```bash
+cd ansible
+ansible-galaxy install -r requirements.yml          # first time only
+
+# Optional: if the SSH key has a passphrase
+eval $(ssh-agent -s) && ssh-add /root/.ssh/id_rsa
+
+ansible-playbook -i inventory/manual playbooks/00_prepare.yml
+ansible-playbook -i inventory/manual playbooks/10_etcd.yml
+ansible-playbook -i inventory/manual playbooks/99_verify.yml
+```
 
 ---
 

@@ -3,12 +3,13 @@
 Common operational procedures for a cluster deployed by this framework.
 
 > **Status (2026-05-31):** the deploy/verify path is fully implemented — `99_verify.yml`
-> checks etcd, **Patroni** (one leader + member count), PostgreSQL reachability, and
-> **HAProxy** routing (see below). The cluster runs PostgreSQL + Patroni + etcd with
-> optional HAProxy. The *wrapper* ops playbooks under `playbooks/ops/` (switchover,
-> replica reinit, rolling restart) are still **stubs** — for now drive those
-> operations with `patronictl` directly, as shown below. Sections marked **[planned]**
-> describe behavior the wrapper playbooks will add once implemented.
+> checks etcd, **Patroni** (one leader + member count), PostgreSQL reachability,
+> **HAProxy** routing, and **pgBackRest** (stanza check + a backup present). The cluster
+> runs PostgreSQL + Patroni + etcd with optional HAProxy routing and pgBackRest backups.
+> The *wrapper* ops playbooks under `playbooks/ops/` (switchover, replica reinit, rolling
+> restart) are still **stubs** — for now drive those operations with `patronictl`
+> directly, as shown below. Sections marked **[planned]** describe behavior the wrapper
+> playbooks will add once implemented.
 
 ---
 
@@ -31,12 +32,15 @@ ansible-playbook -i inventory/<cloud> playbooks/99_verify.yml
 - HAProxy (when `haproxy_enabled`) — reads the stats CSV on each `haproxy` node and
   asserts the read-write (`primary`) and read-only (`standbys`) pools each have an UP
   backend.
+- pgBackRest (when `pgbackrest_enabled`) — runs `pgbackrest check` on the repo host and
+  asserts the stanza has at least one backup.
 
 **[planned]** Add `pg_isready` per host and `pg_stat_replication` lag reporting per
 standby.
 
 Run it after any change. Run it as a cron from your monitoring host if you want a
-cheap external healthcheck. Include HAProxy checks with `-e haproxy_enabled=true`.
+cheap external healthcheck. Include the optional checks with
+`-e haproxy_enabled=true -e pgbackrest_enabled=true`.
 
 ---
 
@@ -232,22 +236,37 @@ Terraform destroy.
 
 ## Backup & restore
 
-> **[planned]** Once `pgbackrest_enabled: true` is set in `playbooks/group_vars/all.yml`
-> and the `30_backups.yml` playbook has been run:
+pgBackRest uses a **dedicated repository host** (the `backup_server` group), so backup
+and `info` commands run **on that host** (not the DB nodes), as the `postgres` user.
+The stanza is named after the cluster (`cluster_name`, default `poaf`). Enable it with
+`-e pgbackrest_enabled=true` on `30_backups.yml` (or set it in group vars).
 
 ```bash
-# On any database host (typically the leader):
-sudo -u postgres pgbackrest --stanza=main info
-sudo -u postgres pgbackrest --stanza=main --type=full backup     # ad-hoc full
-sudo -u postgres pgbackrest --stanza=main --type=diff backup     # ad-hoc diff
+# On the backup server (repository host):
+sudo -u postgres pgbackrest --stanza=poaf info                    # backups + WAL archive range
+sudo -u postgres pgbackrest --stanza=poaf check                   # config + archiving healthy?
+sudo -u postgres pgbackrest --stanza=poaf --type=full backup      # ad-hoc full
+sudo -u postgres pgbackrest --stanza=poaf --type=diff backup      # ad-hoc diff
 ```
 
-Scheduled backups run from systemd timers configured by the `pgbackrest` role.
+Scheduled backups run from `systemd` timers on the repo host (full on Sundays, diff
+the rest of the week by default — see `pgbackrest_backups`):
 
-For restore procedures, refer to the
+```bash
+systemctl list-timers 'pgbackrest-*'
+systemctl status pgbackrest-full-backup.timer pgbackrest-diff-backup.timer
+```
+
+Continuous WAL archiving is driven by the primary's `archive_command`
+(`pgbackrest --stanza=poaf archive-push %p`), set in Patroni's DCS config. `archive_mode`
+was enabled with a one-time rolling restart when the role first ran.
+
+For **restore** / point-in-time recovery, refer to the
 [pgBackRest user guide](https://pgbackrest.org/user-guide.html) — this framework
 configures pgBackRest but does not wrap the restore commands, since restore is
-deliberately a manual operation that should be performed with care.
+deliberately a manual operation that should be performed with care. Note that in a
+Patroni cluster a restore is coordinated through Patroni (e.g. `patronictl reinit`, or
+restoring on the leader with the cluster stopped), not by starting PostgreSQL directly.
 
 ---
 

@@ -6,18 +6,19 @@ provisioned by Terraform and installs a production-style PostgreSQL HA stack on 
 backups, HAProxy routing, and Percona Monitoring and Management (PMM).
 
 > **Status (2026-05-31):** the full PostgreSQL HA stack is implemented — `common`,
-> `storage`, `pg_repos`, `etcd`, `postgresql`, `patroni`, and `haproxy`. A 3-node
-> cluster bootstraps PostgreSQL + Patroni (leader-first, automatic failover) on top
-> of etcd, with optional **HAProxy** routing in front (read-write `:5000`, read-only
-> `:5001`). All packages install from the **Percona PPG** repository by default. The
-> **pgBackRest** and **PMM** roles are still stubs. See **[What works today](#what-works-today)**
-> for the exact state.
+> `storage`, `pg_repos`, `etcd`, `postgresql`, `patroni`, `haproxy`, and `pgbackrest`.
+> A 3-node cluster bootstraps PostgreSQL + Patroni (leader-first, automatic failover)
+> on top of etcd, with optional **HAProxy** routing in front (read-write `:5000`,
+> read-only `:5001`) and optional **pgBackRest** backups (dedicated repository host
+> over SSH, continuous WAL archiving, scheduled full/diff backups). All packages
+> install from the **Percona PPG** repository by default. Only the **PMM** role is
+> still a stub. See **[What works today](#what-works-today)** for the exact state.
 >
 > Tested live end-to-end on a **6-node Azure Rocky 9** fleet (3 database/etcd + 2
 > HAProxy + 1 backup server): the whole `site.yml` ran green, Patroni elected a
 > leader with two streaming replicas, write/read routing through HAProxy was
-> confirmed, and a re-run reported `changed=0`. Also verified earlier on Ubuntu and
-> a Rocky GCP fleet.
+> confirmed, pgBackRest took a full backup with WAL archiving active, and a re-run
+> reported `changed=0`. Also verified earlier on Ubuntu and a Rocky GCP fleet.
 
 ---
 
@@ -49,7 +50,7 @@ See **[handoff.md](handoff.md)** for the full contract.
 | etcd | `10_etcd.yml` | **Implemented** — 3-node cluster, Percona repo by default (or upstream binary). |
 | PostgreSQL + Patroni | `20_patroni.yml` | **Implemented** — installs PG (`postgresql` role: install + prepare; Patroni owns config), bootstraps the cluster leader-first via `patroni`. |
 | HAProxy | `25_haproxy.yml` | **Implemented** (optional) — read-write `:5000` / read-only `:5001` routing driven by Patroni's REST health checks. Gated by `haproxy_enabled`; targets the `haproxy` group. |
-| Backups | `30_backups.yml` | **Stub** |
+| Backups | `30_backups.yml` | **Implemented** (optional) — pgBackRest on a dedicated repo host (`backup_server`) over SSH: stanza, continuous WAL archiving, an initial full backup, and full/diff timers. Gated by `pgbackrest_enabled`. |
 | Monitoring | `40_monitoring.yml` | **Stub** |
 | Verify | `99_verify.yml` | **Implemented** — connectivity, storage mount, PG binary, etcd (members + health), Patroni (one leader + member count), and HAProxy routing (when `haproxy_enabled`). |
 
@@ -90,7 +91,11 @@ ansible-playbook -i inventory/gcp playbooks/20_patroni.yml
 # 3b. (optional) HAProxy routing — only if you provisioned haproxy nodes
 ansible-playbook -i inventory/gcp playbooks/25_haproxy.yml -e haproxy_enabled=true
 
-# 4. Verify (etcd + Patroni; HAProxy too when haproxy_enabled)
+# 3c. (optional) pgBackRest backups — only if you provisioned a backup server.
+#     NOTE: this enables WAL archiving, which triggers a one-time rolling restart.
+ansible-playbook -i inventory/gcp playbooks/30_backups.yml -e pgbackrest_enabled=true
+
+# 4. Verify (etcd + Patroni; HAProxy + pgBackRest too when their toggles are set)
 ansible-playbook -i inventory/gcp playbooks/99_verify.yml
 ```
 
@@ -98,7 +103,8 @@ ansible-playbook -i inventory/gcp playbooks/99_verify.yml
 include HAProxy):
 
 ```bash
-ansible-playbook -i inventory/gcp playbooks/site.yml -e haproxy_enabled=true   # or aws, azure
+ansible-playbook -i inventory/gcp playbooks/site.yml \
+  -e haproxy_enabled=true -e pgbackrest_enabled=true     # or aws, azure
 ```
 
 Re-running any of these is safe — the roles are idempotent (a second run reports
@@ -403,6 +409,45 @@ once you've provisioned HAProxy nodes (Terraform `haproxy_hosts`). Installs the 
 for Percona's build. On RHEL/Rocky the role sets the `haproxy_connect_any` SELinux
 boolean so HAProxy can bind the custom ports and dial the backends.
 
+### Backups (pgBackRest)
+
+`30_backups.yml` (optional) configures [pgBackRest](https://pgbackrest.org/) with a
+**dedicated repository host** — the `backup_server` group (Terraform `backup_hosts`) —
+which the database nodes reach over passwordless SSH. The repository lives on the
+backup host's mounted data disk.
+
+What the role does, in one play across both tiers:
+
+1. Installs `percona-pgbackrest` on the DB nodes and the repo host; creates the
+   `postgres` user on the repo host.
+2. Builds an any-to-any passwordless **SSH mesh** for the `postgres` user (one ed25519
+   key generated once on the control node, persisted under `inventory/<cloud>/`
+   gitignored, installed on every host).
+3. Renders the repo-host config (lists every DB node so pgBackRest auto-finds the
+   primary; `backup-standby=y` offloads backups to a replica) and the DB-agent config.
+4. Runs `stanza-create`, then enables **continuous WAL archiving** — it sets
+   `archive_mode=on` + `archive_command` in Patroni's DCS via `patronictl edit-config`
+   and performs a **controlled rolling restart** (replicas first, then the leader),
+   since `archive_mode` is restart-only.
+5. Takes an initial full backup and installs `systemd` **timers** for scheduled
+   full + differential backups on the repo host.
+
+Gated by `pgbackrest_enabled` (default `false`). Key knobs (role defaults):
+
+| Variable | Default | Notes |
+|---|---|---|
+| `pgbackrest_stanza` | `{{ cluster_name }}` | one stanza for the whole cluster |
+| `pgbackrest_repo_path` | `<mount>/pgbackrest` | repo dir on the backup host's data disk |
+| `pgbackrest_retention_full` | `4` | full backups to keep (with their WAL) |
+| `pgbackrest_backup_standby` | `true` | back up from a replica, not the primary |
+| `pgbackrest_backups` | full (Sun) + diff (Mon–Sat) | `OnCalendar` schedules for the timers |
+
+> **One-time restart:** enabling pgBackRest flips `archive_mode` on, which requires a
+> PostgreSQL restart. The role does this as a rolling restart (replicas → leader). Plan
+> for it, or stage `pgbackrest_enabled` during a maintenance window.
+
+Day-2 backup/restore commands are in [runbook.md](runbook.md).
+
 ### Switching PostgreSQL distributions
 
 By default the framework targets **Percona PPG**. Community **PGDG** is the
@@ -437,7 +482,7 @@ verified end-to-end.
 | PostgreSQL | PPG packages installed + host prepared; `data_directory` under the mounted disk (Patroni initializes it) | **Done** |
 | Patroni | DCS-backed automatic failover, REST API on each node, leader-first bootstrap, systemd unit | **Done** |
 | Routing *(optional)* | HAProxy with R/W (`:5000`) and R/O (`:5001`) endpoints driven by Patroni's REST API | **Done** |
-| Backups *(optional)* | pgBackRest, full + diff schedule, repo on cloud object storage | Planned |
+| Backups *(optional)* | pgBackRest on a dedicated repo host (SSH), continuous WAL archiving + full/diff schedule | **Done** |
 | Monitoring *(optional)* | PMM client registered against your PMM server | Planned |
 
 Optional components are enabled via group vars / `-e` (e.g. `haproxy_enabled: true`,

@@ -7,10 +7,11 @@ major public clouds.
 The Terraform layer (**VM provisioning + Ansible inventory generation**) is
 functional across all three clouds. The Ansible layer consumes that inventory to
 deploy a PostgreSQL HA stack — **Percona PostgreSQL + Patroni + etcd**, with optional
-**HAProxy** connection routing — all installed from the Percona PostgreSQL
-repository. The full stack has been deployed and verified end-to-end on a 6-node
-Azure fleet (3 database/etcd nodes + 2 HAProxy + 1 backup server). Backups
-(pgBackRest) and monitoring (PMM) are next.
+**HAProxy** connection routing and **pgBackRest** backups (continuous WAL archiving +
+scheduled backups to a dedicated repository host) — all installed from the Percona
+PostgreSQL repository. The full stack has been deployed and verified end-to-end on a
+6-node Azure fleet (3 database/etcd nodes + 2 HAProxy + 1 backup server). Monitoring
+(PMM) is next.
 
 ## Layout
 
@@ -59,12 +60,13 @@ This is an early, in-development project.
 - **Ansible layer:** the PostgreSQL HA stack is implemented and deploys + verifies
   green — OS prep (`common`), `storage`, `pg_repos`, a 3-node **etcd** cluster,
   **PostgreSQL** + **Patroni** (leader-first bootstrap, automatic failover), and
-  optional **HAProxy** routing (read-write on `:5000`, read-only on `:5001`). All
-  packages come from the **Percona Distribution for PostgreSQL** repo by default, on
-  Debian/Ubuntu and RHEL/Rocky. Tested live end-to-end on a 6-node Azure Rocky 9
-  fleet (and earlier on Ubuntu). **pgBackRest** backups and **PMM** monitoring roles
-  are still stubs. See [ansible/doc/README.md](ansible/doc/README.md) for the current
-  state and usage — contributions welcome.
+  optional **HAProxy** routing (read-write on `:5000`, read-only on `:5001`) and
+  optional **pgBackRest** backups (dedicated repository host over SSH, continuous WAL
+  archiving, scheduled full/diff backups). All packages come from the **Percona
+  Distribution for PostgreSQL** repo by default, on Debian/Ubuntu and RHEL/Rocky.
+  Tested live end-to-end on a 6-node Azure Rocky 9 fleet (and earlier on Ubuntu). The
+  **PMM** monitoring role is still a stub. See [ansible/doc/README.md](ansible/doc/README.md)
+  for the current state and usage — contributions welcome.
 
 ## License
 

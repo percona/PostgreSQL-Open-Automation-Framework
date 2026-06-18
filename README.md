@@ -70,5 +70,4 @@ This is an early, in-development project.
 
 ## License
 
-To be determined — open the [issues tab](https://github.com/percona/PostgreSQL-Open-Automation-Framework/issues)
-to discuss.
+This whole work, including documentation is under  [PostgreSQL License](LICENSE.md)

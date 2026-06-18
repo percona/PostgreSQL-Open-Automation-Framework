@@ -1,7 +1,7 @@
 Postgres License  
-pg_gather is released under the PostgreSQL Licence. a liberal Open Source license, similar to the MIT license
+PostgreSQL-Open-Automation-Framework is released under the PostgreSQL Licence. a liberal Open Source license, similar to the MIT license
 
-Copyright (c) 2020-2026 Jobin Augustine
+Copyright (c) 2026 Percona
 
 Permission to use, copy, modify, and distribute this software and its documentation for any purpose, 
 without fee, and without a written agreement is hereby granted, provided that the above copyright notice 
